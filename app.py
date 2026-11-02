@@ -2646,12 +2646,12 @@ st.markdown(
 # メインタブの文字・余白を明確に強調（StreamlitのDOM差異を考慮）
 st.markdown("""<style>
 [data-testid="stTabs"] [data-baseweb="tab-list"] button[data-baseweb="tab"] {
-    min-height: 64px !important;
-    padding: 14px 25px !important;
+    min-height: 82px !important;
+    padding: 19px 30px !important;
 }
 [data-testid="stTabs"] [data-baseweb="tab-list"] button[data-baseweb="tab"] p,
 [data-testid="stTabs"] [data-baseweb="tab-list"] button[data-baseweb="tab"] span {
-    font-size: 22px !important;
+    font-size: 28px !important;
     font-weight: 800 !important;
     line-height: 1.5 !important;
 }
