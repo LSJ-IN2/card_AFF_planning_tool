@@ -97,7 +97,8 @@ def show_competitor_analysis():
             )
         segment_options = sorted(df["セグメント"].unique())
         segments = st.multiselect(
-            "セグメント", segment_options, default=segment_options,
+            "セグメント", segment_options,
+            default=[v for v in ["1軍", "2軍"] if v in segment_options],
             key="competitor_segments",
         )
         if not products or not segments:
