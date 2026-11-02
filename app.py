@@ -1733,8 +1733,8 @@ def render_history_analytics(
         ax_count.set_xticklabels(labels, rotation=45, ha="right", fontproperties=jp_font)
         ax_count.grid(axis="y", alpha=0.25)
         fig_count.tight_layout()
-        st.pyplot(fig_count, width="stretch")
         count_png = _figure_png_bytes(fig_count)
+        st.image(count_png, use_container_width=True)
         _render_png_actions(
             count_png,
             f"月度別_発行数_{scope_suffix}.png",
@@ -1754,8 +1754,8 @@ def render_history_analytics(
         ax_cpa.set_xticklabels(labels, rotation=45, ha="right", fontproperties=jp_font)
         ax_cpa.grid(axis="y", alpha=0.25)
         fig_cpa.tight_layout()
-        st.pyplot(fig_cpa, width="stretch")
         cpa_png = _figure_png_bytes(fig_cpa)
+        st.image(cpa_png, use_container_width=True)
         _render_png_actions(
             cpa_png,
             f"月度別_発行CPA_{scope_suffix}.png",
@@ -2669,1429 +2669,1439 @@ with col2:
         help="A列=日付（YYYYMMDD）、B列以降の1行目=AFコード、各セル=件数のAF発行実績。",
     )
 
-from competitor_analysis import show_competitor_analysis
-show_competitor_analysis()
+tab_history, tab_planning, tab_competitor = st.tabs(["📊 過去実績分析", "🧮 プランニング", "📈 競合分析"])
+with tab_history:
+    st.info("実績ファイルをアップロードすると月度別分析を表示します。")
+with tab_competitor:
+    st.subheader("競合分析ダッシュボード")
+    from competitor_analysis import show_competitor_analysis
+    show_competitor_analysis()
+    from competitor_cv_analysis import show_competitor_cv_analysis
+    competitor_history_slot = st.empty()
+
 
 has_af_data = uploaded_af_apply is not None or uploaded_af_issue is not None
 has_any_actual = uploaded_file is not None or has_af_data
 
-if uploaded_master and has_any_actual:
-    exclude_compensation = True
-    if uploaded_file is not None:
-        st.sidebar.header("⚙️ 実績データ条件")
-        exclude_compensation = st.sidebar.toggle(
-            "補填を除外",
-            value=True,
-            help="ON: TG実績データP列に文字列が入っている補填対象行を除外します。",
-        )
-
-    try:
-        from data.loader import add_business_edge_flags
-        from logic.factors import (
-            calculate_dynamic_factor_tables,
-            calculate_normal_month_base,
-            calculate_selected_cpn_base,
-            get_cpn_reference_periods,
-            enforce_premium_media_cost,
-            calculate_media_continuation_table,
-        )
-        from config.constants import RECENT_NORMAL_DAYS
-
-        history_df = pd.DataFrame()
-        tg_raw_max_date = pd.NaT
+with tab_planning:
+    if uploaded_master and has_any_actual:
+        exclude_compensation = True
         if uploaded_file is not None:
-            history_df = load_data(uploaded_file, exclude_compensation=exclude_compensation)
-            history_df["date"] = pd.to_datetime(
-                history_df["date"],
-                errors="coerce",
-            ).dt.normalize()
-            tg_raw_max_date = history_df["date"].max()
-
-        cpn_master, media_master, af_code_master = load_master_workbook_with_af(uploaded_master)
-
-        required_master_columns = {"日付", "CPN名", "月度"}
-        missing_master = required_master_columns - set(cpn_master.columns)
-
-        if missing_master:
-            raise ValueError(
-                f"CPNマスタに必要な列がありません: "
-                f"{', '.join(sorted(missing_master))}"
+            st.sidebar.header("⚙️ 実績データ条件")
+            exclude_compensation = st.sidebar.toggle(
+                "補填を除外",
+                value=True,
+                help="ON: TG実績データP列に文字列が入っている補填対象行を除外します。",
             )
 
-        cpn_master = cpn_master.copy()
-        cpn_master["日付"] = pd.to_datetime(
-            cpn_master["日付"],
-            errors="coerce",
-        ).dt.normalize()
-        cpn_master["CPN名"] = (
-            cpn_master["CPN名"]
+        try:
+            from data.loader import add_business_edge_flags
+            from logic.factors import (
+                calculate_dynamic_factor_tables,
+                calculate_normal_month_base,
+                calculate_selected_cpn_base,
+                get_cpn_reference_periods,
+                enforce_premium_media_cost,
+                calculate_media_continuation_table,
+            )
+            from config.constants import RECENT_NORMAL_DAYS
+
+            history_df = pd.DataFrame()
+            tg_raw_max_date = pd.NaT
+            if uploaded_file is not None:
+                history_df = load_data(uploaded_file, exclude_compensation=exclude_compensation)
+                history_df["date"] = pd.to_datetime(
+                    history_df["date"],
+                    errors="coerce",
+                ).dt.normalize()
+                tg_raw_max_date = history_df["date"].max()
+
+            cpn_master, media_master, af_code_master = load_master_workbook_with_af(uploaded_master)
+
+            required_master_columns = {"日付", "CPN名", "月度"}
+            missing_master = required_master_columns - set(cpn_master.columns)
+
+            if missing_master:
+                raise ValueError(
+                    f"CPNマスタに必要な列がありません: "
+                    f"{', '.join(sorted(missing_master))}"
+                )
+
+            cpn_master = cpn_master.copy()
+            cpn_master["日付"] = pd.to_datetime(
+                cpn_master["日付"],
+                errors="coerce",
+            ).dt.normalize()
+            cpn_master["CPN名"] = (
+                cpn_master["CPN名"]
+                .astype("string")
+                .str.strip()
+            )
+            cpn_master["月度"] = (
+                cpn_master["月度"]
+                .astype("string")
+                .str.strip()
+            )
+            cpn_master = cpn_master.dropna(
+                subset=["日付", "CPN名"]
+            )
+            cpn_master["月度"] = (
+                cpn_master["月度"]
+                .replace("", pd.NA)
+                .fillna("未設定")
+            )
+            cpn_master = cpn_master.drop_duplicates(
+                subset=["日付"],
+                keep="last",
+            )
+
+            if cpn_master.empty:
+                raise ValueError(
+                    "CPNマスタに有効な日付・CPN名がありません。"
+                )
+
+            cpn_master["line_oa_flag"] = (
+                _truthy(cpn_master["LINE OA配信"])
+                if "LINE OA配信" in cpn_master
+                else 0
+            )
+            cpn_master["magitoku_after_flag"] = (
+                _truthy(cpn_master["マジ得後"])
+                if "マジ得後" in cpn_master
+                else 0
+            )
+
+            af_history_df = _prepare_af_history(
+                uploaded_af_apply, uploaded_af_issue, af_code_master, cpn_master
+            ) if has_af_data else pd.DataFrame()
+            af_code_history_df = _prepare_af_code_history(
+                uploaded_af_apply, uploaded_af_issue, af_code_master, cpn_master
+            ) if has_af_data else pd.DataFrame()
+
+
+        except Exception as exc:
+            st.error(f"ファイルの読み込みに失敗しました: {exc}")
+            st.stop()
+
+        if uploaded_file is None:
+            st.subheader("📊 計測結果")
+            _render_measurement_tabs(tg_df=None, af_df=af_history_df, af_code_df=af_code_history_df, key_prefix="af_only")
+            st.info("AF計測実績のみを読み込みました。TG実績がないため、従来の媒体別予測・最適化・提出用Excel生成は表示していません。")
+            st.stop()
+
+        history_df = history_df.merge(
+            cpn_master[
+                [
+                    "日付",
+                    "CPN名",
+                    "月度",
+                    "line_oa_flag",
+                    "magitoku_after_flag",
+                ]
+            ],
+            left_on="date",
+            right_on="日付",
+            how="left",
+        )
+
+        history_df["CPN名"] = history_df["CPN名"].fillna("通常")
+        history_df["line_oa_flag"] = (
+            history_df["line_oa_flag"]
+            .fillna(0)
+            .astype(int)
+        )
+        history_df["magitoku_after_flag"] = (
+            history_df["magitoku_after_flag"]
+            .fillna(0)
+            .astype(int)
+        )
+        history_df["月度"] = (
+            history_df["月度"]
             .astype("string")
             .str.strip()
-        )
-        cpn_master["月度"] = (
-            cpn_master["月度"]
-            .astype("string")
-            .str.strip()
-        )
-        cpn_master = cpn_master.dropna(
-            subset=["日付", "CPN名"]
-        )
-        cpn_master["月度"] = (
-            cpn_master["月度"]
             .replace("", pd.NA)
             .fillna("未設定")
         )
-        cpn_master = cpn_master.drop_duplicates(
-            subset=["日付"],
-            keep="last",
+
+        history_df = history_df.merge(
+            media_master[["SID", "媒体名", "カテゴリ"]],
+            on="SID",
+            how="left",
+        )
+        history_df["raw_media"] = history_df["media"]
+        mapped_media = (
+            history_df["媒体名"]
+            .astype("string")
+            .str.strip()
+            .replace("", pd.NA)
+        )
+        history_df["media"] = mapped_media.fillna(history_df["raw_media"])
+        history_df["media_category"] = (
+            history_df["カテゴリ"]
+            .astype("string")
+            .str.strip()
+            .replace("", pd.NA)
+            .fillna("未分類")
         )
 
-        if cpn_master.empty:
-            raise ValueError(
-                "CPNマスタに有効な日付・CPN名がありません。"
-            )
-
-        cpn_master["line_oa_flag"] = (
-            _truthy(cpn_master["LINE OA配信"])
-            if "LINE OA配信" in cpn_master
-            else 0
-        )
-        cpn_master["magitoku_after_flag"] = (
-            _truthy(cpn_master["マジ得後"])
-            if "マジ得後" in cpn_master
-            else 0
-        )
-
-        af_history_df = _prepare_af_history(
-            uploaded_af_apply, uploaded_af_issue, af_code_master, cpn_master
-        ) if has_af_data else pd.DataFrame()
-        af_code_history_df = _prepare_af_code_history(
-            uploaded_af_apply, uploaded_af_issue, af_code_master, cpn_master
-        ) if has_af_data else pd.DataFrame()
-
-
-    except Exception as exc:
-        st.error(f"ファイルの読み込みに失敗しました: {exc}")
-        st.stop()
-
-    if uploaded_file is None:
         st.subheader("📊 計測結果")
-        _render_measurement_tabs(tg_df=None, af_df=af_history_df, af_code_df=af_code_history_df, key_prefix="af_only")
-        st.info("AF計測実績のみを読み込みました。TG実績がないため、従来の媒体別予測・最適化・提出用Excel生成は表示していません。")
-        st.stop()
-
-    history_df = history_df.merge(
-        cpn_master[
-            [
-                "日付",
-                "CPN名",
-                "月度",
-                "line_oa_flag",
-                "magitoku_after_flag",
-            ]
-        ],
-        left_on="date",
-        right_on="日付",
-        how="left",
-    )
-
-    history_df["CPN名"] = history_df["CPN名"].fillna("通常")
-    history_df["line_oa_flag"] = (
-        history_df["line_oa_flag"]
-        .fillna(0)
-        .astype(int)
-    )
-    history_df["magitoku_after_flag"] = (
-        history_df["magitoku_after_flag"]
-        .fillna(0)
-        .astype(int)
-    )
-    history_df["月度"] = (
-        history_df["月度"]
-        .astype("string")
-        .str.strip()
-        .replace("", pd.NA)
-        .fillna("未設定")
-    )
-
-    history_df = history_df.merge(
-        media_master[["SID", "媒体名", "カテゴリ"]],
-        on="SID",
-        how="left",
-    )
-    history_df["raw_media"] = history_df["media"]
-    mapped_media = (
-        history_df["媒体名"]
-        .astype("string")
-        .str.strip()
-        .replace("", pd.NA)
-    )
-    history_df["media"] = mapped_media.fillna(history_df["raw_media"])
-    history_df["media_category"] = (
-        history_df["カテゴリ"]
-        .astype("string")
-        .str.strip()
-        .replace("", pd.NA)
-        .fillna("未分類")
-    )
-
-    st.subheader("📊 計測結果")
-    _render_measurement_tabs(
-        tg_df=history_df,
-        af_df=af_history_df if has_af_data else None,
-        af_code_df=af_code_history_df if has_af_data else None,
-        key_prefix="measurement_compare",
-    )
-
-    st.sidebar.header("商品ID選択")
-    all_product_ids = sorted(
-        [x for x in history_df["商品ID"].dropna().astype(str).unique() if str(x).strip() != ""]
-    )
-    default_product_ids = list(all_product_ids)
-    selected_product_ids = st.sidebar.multiselect(
-        "商品ID",
-        all_product_ids,
-        default=default_product_ids,
-    )
-    if not selected_product_ids:
-        st.stop()
-
-    history_df = history_df[
-        history_df["商品ID"].astype(str).isin(selected_product_ids)
-    ].copy()
-
-    st.sidebar.header("媒体選択")
-    all_categories = sorted(history_df["media_category"].dropna().astype(str).unique())
-    selected_categories = st.sidebar.multiselect(
-        "カテゴリ",
-        all_categories,
-        default=all_categories,
-    )
-    if not selected_categories:
-        st.stop()
-
-    history_df = history_df[
-        history_df["media_category"].isin(selected_categories)
-    ].copy()
-
-    all_media = sorted(history_df["media"].dropna().astype(str).unique())
-    default_media = [
-        m for m in all_media
-        if "計測" not in m
-    ]
-
-    selected_media = st.sidebar.multiselect(
-        "媒体",
-        all_media,
-        default=default_media,
-    )
-
-    if not selected_media:
-        st.stop()
-
-    history_df = history_df[
-        history_df["media"].isin(selected_media)
-    ].copy()
-
-    from competitor_cv_analysis import show_competitor_cv_analysis
-    show_competitor_cv_analysis(history_df)
-
-    history_analytics_placeholder = st.empty()
-    try:
-        _period_preview = _calculate_period_media_metrics(history_df)
-        approval_preview = pd.DataFrame(
-            [
-                {
-                    "媒体": media,
-                    "定常承認率": _period_preview["normal_rate"].get(
-                        media,
-                        _period_preview["normal_rate_all"],
-                    ),
-                    "マジ得承認率": _period_preview["magi_rate"].get(
-                        media,
-                        _period_preview["magi_rate_all"],
-                    ),
-                    "定常単価": _period_preview["normal_unit"].get(
-                        media,
-                        _period_preview["normal_unit_all"],
-                    ),
-                    "マジ得単価": _period_preview["magi_unit"].get(
-                        media,
-                        _period_preview["magi_unit_all"],
-                    ),
-                }
-                for media in selected_media
-            ]
+        _render_measurement_tabs(
+            tg_df=history_df,
+            af_df=af_history_df if has_af_data else None,
+            af_code_df=af_code_history_df if has_af_data else None,
+            key_prefix="measurement_compare",
         )
 
-        approval_preview["定常承認率"] = approval_preview["定常承認率"].map(
-            lambda x: f"{x:.1%}"
+        st.sidebar.header("商品ID選択")
+        all_product_ids = sorted(
+            [x for x in history_df["商品ID"].dropna().astype(str).unique() if str(x).strip() != ""]
         )
-        approval_preview["マジ得承認率"] = approval_preview["マジ得承認率"].map(
-            lambda x: f"{x:.1%}"
-        )
-        approval_preview["定常単価"] = approval_preview["定常単価"].map(
-            lambda x: f"¥{x:,.0f}"
-        )
-        approval_preview["マジ得単価"] = approval_preview["マジ得単価"].map(
-            lambda x: f"¥{x:,.0f}"
-        )
-
-        with st.expander("✅ 定常・マジ得の過去実績指標"):
-            st.caption(
-                "承認率 = 成果承認フラグYの件数 ÷ 全件数 / "
-                "単価 = ローデータW列『グロス』の直近実績"
-            )
-            st.dataframe(
-                approval_preview,
-                width="stretch",
-                hide_index=True,
-            )
-
-    except ValueError as approval_exc:
-        st.warning(
-            "定常・マジ得指標を算出できません。"
-            f"{approval_exc}"
-        )
-
-    st.sidebar.header("📊 対象期間・施策")
-
-    cpn_list = sorted(
-        cpn_master["CPN名"]
-        .dropna()
-        .astype(str)
-        .unique()
-    )
-    if not cpn_list:
-        st.error("CPNマスタに選択可能な施策がありません。")
-        st.stop()
-
-    normal_labels = {"通常", "定常"}
-    default_primary = next((x for x in ["定常", "通常"] if x in cpn_list), cpn_list[0])
-    today = datetime.date.today()
-
-    selected_cpn_1 = st.sidebar.selectbox(
-        "施策①",
-        cpn_list,
-        index=cpn_list.index(default_primary),
-        key="planning_cpn_1",
-    )
-    start_date_1 = st.sidebar.date_input(
-        "施策① 開始",
-        today,
-        key="planning_start_1",
-    )
-    end_date_1 = st.sidebar.date_input(
-        "施策① 終了",
-        today + datetime.timedelta(days=7),
-        key="planning_end_1",
-    )
-
-    use_second_period = st.sidebar.toggle(
-        "施策②を追加",
-        value=False,
-        key="planning_use_second",
-    )
-
-    selected_cpn_2 = None
-    start_date_2 = None
-    end_date_2 = None
-    if use_second_period:
-        default_second = "マジ得" if "マジ得" in cpn_list else cpn_list[0]
-        selected_cpn_2 = st.sidebar.selectbox(
-            "施策②",
-            cpn_list,
-            index=cpn_list.index(default_second),
-            key="planning_cpn_2",
-        )
-        start_date_2 = st.sidebar.date_input(
-            "施策② 開始",
-            end_date_1 + datetime.timedelta(days=1),
-            key="planning_start_2",
-        )
-        end_date_2 = st.sidebar.date_input(
-            "施策② 終了",
-            end_date_1 + datetime.timedelta(days=7),
-            key="planning_end_2",
-        )
-
-    planning_segments = [
-        {"label": "施策①", "cpn": selected_cpn_1, "start": start_date_1, "end": end_date_1}
-    ]
-    if use_second_period:
-        planning_segments.append(
-            {"label": "施策②", "cpn": selected_cpn_2, "start": start_date_2, "end": end_date_2}
-        )
-
-    for seg in planning_segments:
-        if seg["start"] > seg["end"]:
-            st.error(f"{seg['label']}の開始日は終了日以前にしてください。")
-            st.stop()
-
-    if use_second_period:
-        r1 = pd.date_range(start_date_1, end_date_1)
-        r2 = pd.date_range(start_date_2, end_date_2)
-        if len(r1.intersection(r2)) > 0:
-            st.error("施策①と施策②の期間が重複しています。期間が重ならないように設定してください。")
-            st.stop()
-
-    needs_normal_learning = any(seg["cpn"] in normal_labels for seg in planning_segments)
-    selected_learning_months = []
-    normal_training_df = history_df
-    normal_learning_calendar_dates = None
-    normal_learning_start = None
-    normal_learning_cutoff = None
-    if needs_normal_learning:
-        history_dates = pd.to_datetime(history_df["date"], errors="coerce").dt.normalize()
-        available_history_dates = history_dates.dropna()
-        if available_history_dates.empty:
-            st.error("利用可能な実績データがありません。")
-            st.stop()
-        normal_learning_cutoff = pd.Timestamp(available_history_dates.max()).normalize()
-        requested_normal_learning_start = normal_learning_cutoff - pd.Timedelta(days=59)
-        earliest_history_date = pd.Timestamp(available_history_dates.min()).normalize()
-        normal_learning_start = max(requested_normal_learning_start, earliest_history_date)
-        normal_training_df = history_df.loc[
-            history_dates.between(normal_learning_start, normal_learning_cutoff)
-        ].copy()
-        normal_learning_calendar_dates = (
-            cpn_master.loc[
-                pd.to_datetime(cpn_master["日付"], errors="coerce").dt.normalize()
-                .between(normal_learning_start, normal_learning_cutoff)
-                & cpn_master["CPN名"].astype(str).str.strip().isin(normal_labels),
-                "日付",
-            ]
-            .pipe(pd.to_datetime, errors="coerce")
-            .dropna().dt.normalize().drop_duplicates().sort_values().tolist()
-        )
-        selected_learning_months = (
-            normal_training_df.loc[normal_training_df["CPN名"].isin(normal_labels), "月度"]
-            .dropna().astype(str).loc[lambda x: x.ne("未設定")].drop_duplicates().tolist()
-        )
-        if not normal_learning_calendar_dates:
-            st.error("ローデータ最新日基準の利用可能期間内にCPNマスタの定常日がありません。")
-            st.stop()
-        st.sidebar.caption(
-            f"定常学習: {normal_learning_start.strftime('%Y/%m/%d')}〜"
-            f"{normal_learning_cutoff.strftime('%Y/%m/%d')}（最大60日・利用可能実績を使用）"
-        )
-
-    segment_bases = []
-    reference_descriptions = []
-
-    for seg_idx, seg in enumerate(planning_segments, start=1):
-        selected_cpn = seg["cpn"]
-        if selected_cpn in normal_labels:
-            base_pair_seg = _calculate_normal_month_base(
-                normal_training_df,
-                selected_learning_months,
-                calendar_dates=normal_learning_calendar_dates,
-            )
-            if base_pair_seg.empty:
-                st.error("予測開始日前の利用可能期間に定常実績がありません。")
-                st.stop()
-            reference_key_seg = ("normal_60days", str(normal_learning_start), str(normal_learning_cutoff))
-            reference_descriptions.append(
-                f"{seg['label']} {selected_cpn}: 定常学習 最大60日 "
-                f"({normal_learning_start.strftime('%Y/%m/%d')}〜{normal_learning_cutoff.strftime('%Y/%m/%d')})"
-            )
-        else:
-            available_periods = get_cpn_reference_periods(history_df, selected_cpn)
-            if not available_periods:
-                st.error(f"実績内に『{selected_cpn}』のキャンペーン期間がありません。")
-                st.stop()
-
-            period_options = {
-                f"{p_start.strftime('%Y/%m/%d')} ～ {p_end.strftime('%Y/%m/%d')}": (p_start, p_end)
-                for p_start, p_end in available_periods
-            }
-            selected_period_labels = st.sidebar.multiselect(
-                f"{seg['label']} {selected_cpn} 参照期間",
-                options=list(period_options.keys()),
-                default=list(period_options.keys()),
-                key=f"cpn_reference_periods_{seg_idx}",
-            )
-            if not selected_period_labels:
-                st.warning(f"{seg['label']}の参照期間を1つ以上選択してください。")
-                st.stop()
-            selected_periods = [period_options[label] for label in selected_period_labels]
-            base_pair_seg = calculate_selected_cpn_base(
-                history_df,
-                selected_cpn,
-                selected_periods,
-            )
-            if base_pair_seg.empty:
-                st.error(f"{seg['label']}の選択参照期間に対象媒体の実績がありません。")
-                st.stop()
-            reference_key_seg = (selected_cpn, tuple(selected_period_labels))
-            reference_descriptions.append(
-                f"{seg['label']} {selected_cpn}: " + " / ".join(selected_period_labels)
-            )
-
-        base_pair_seg = base_pair_seg[base_pair_seg["media"].isin(selected_media)].copy()
-        if base_pair_seg.empty:
-            st.error(f"{seg['label']}の学習実績に対象媒体がありません。")
-            st.stop()
-        segment_bases.append(
-            {**seg, "base_pair": base_pair_seg, "reference_key": reference_key_seg}
-        )
-
-    st.subheader("📈 予測ベース")
-    st.caption(
-        "定常は選択月度の定常日平均、その他施策は選択した過去CPN期間の日平均を使用します。"
-    )
-    for desc in reference_descriptions:
-        st.write(f"・{desc}")
-
-    base_preview_rows = []
-    for seg in segment_bases:
-        tmp = (
-            seg["base_pair"].groupby("media", as_index=False)
-            .agg(base_cv=("base_cv", "sum"), cost=("cost", "sum"))
-        )
-        tmp["施策"] = seg["label"] + "：" + seg["cpn"]
-        base_preview_rows.append(tmp)
-    base_preview = pd.concat(base_preview_rows, ignore_index=True)
-    base_preview = base_preview.rename(
-        columns={"media": "媒体", "base_cv": "基礎CV/日", "cost": "基礎COST/日"}
-    )
-    base_preview["基礎CV/日"] = base_preview["基礎CV/日"].round(2)
-    base_preview["基礎COST/日"] = base_preview["基礎COST/日"].round(0)
-    st.dataframe(
-        base_preview[["施策", "媒体", "基礎CV/日", "基礎COST/日"]],
-        width="stretch",
-        hide_index=True,
-    )
-
-    selected_cpn = selected_cpn_1
-    start_date = min(seg["start"] for seg in planning_segments)
-    end_date = max(seg["end"] for seg in planning_segments)
-    base_pair = pd.concat([seg["base_pair"] for seg in segment_bases], ignore_index=True)
-
-    st.sidebar.header("🎯 最適化ロジック")
-
-    opt_mode = st.sidebar.radio(
-        "最適基準",
-        ["単価最小", "CV最大"],
-        index=1,
-    )
-
-    factor_cache_key = (
-        tuple(selected_media),
-        tuple(selected_product_ids),
-        bool(exclude_compensation),
-        len(history_df),
-        str(history_df["date"].min()),
-        str(history_df["date"].max()),
-        float(pd.to_numeric(history_df["cv"], errors="coerce").fillna(0).sum()),
-        float(pd.to_numeric(history_df["cost"], errors="coerce").fillna(0).sum()),
-        (str(normal_learning_start), str(normal_learning_cutoff)) if needs_normal_learning else (),
-    )
-
-    if st.session_state.get("_factor_cache_key") == factor_cache_key:
-        factor_tables = st.session_state["_factor_tables"]
-    else:
-        factor_tables = calculate_dynamic_factor_tables(
-            normal_training_df if needs_normal_learning else history_df,
-            selected_learning_months if needs_normal_learning else None,
-            calendar_dates=normal_learning_calendar_dates if needs_normal_learning else None,
-        )
-        st.session_state["_factor_cache_key"] = factor_cache_key
-        st.session_state["_factor_tables"] = factor_tables
-
-    st.subheader("📐 実績から算出した変動係数")
-
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
-        ["曜日", "月初・月末", "需要期", "LINE OA", "学習除外日", "休眠媒体"]
-    )
-
-    with tab1:
-        st.dataframe(
-            factor_tables["weekday"].round(3),
-            width="stretch",
-            hide_index=True,
-        )
-
-    with tab2:
-        st.dataframe(
-            factor_tables["month_edge"].round(3),
-            width="stretch",
-            hide_index=True,
-        )
-
-    with tab3:
-        st.dataframe(
-            factor_tables["season"].round(3),
-            width="stretch",
-            hide_index=True,
-        )
-
-    with tab4:
-        if factor_tables["line_oa"].empty:
-            st.info(
-                "過去のLINE OA配信実績がないため、"
-                "LINE OA係数は1.0です。"
-            )
-        else:
-            st.dataframe(
-                factor_tables["line_oa"].round(3),
-                width="stretch",
-                hide_index=True,
-            )
-
-
-    with tab5:
-        excluded = factor_tables.get("excluded", pd.DataFrame())
-        if excluded.empty:
-            st.info("マジ得直後・異常値による学習除外日はありません。")
-        else:
-            preview_excluded = excluded.copy()
-            if "date" in preview_excluded.columns:
-                preview_excluded["date"] = pd.to_datetime(preview_excluded["date"]).dt.strftime("%Y/%m/%d")
-            st.caption("定常の基礎値・変動係数の学習から除外した媒体×日です。予測対象実績そのものは削除しません。")
-            st.dataframe(
-                preview_excluded.round(3),
-                width="stretch",
-                hide_index=True,
-            )
-
-    with tab6:
-        inactive_media = factor_tables.get("inactive_media", pd.DataFrame())
-        if inactive_media.empty:
-            st.info("直近30日CVなしで休眠判定された媒体はありません。")
-        else:
-            inactive_preview = inactive_media.copy()
-            if "last_positive_date" in inactive_preview.columns:
-                inactive_preview["last_positive_date"] = pd.to_datetime(
-                    inactive_preview["last_positive_date"]
-                ).dt.strftime("%Y/%m/%d")
-            inactive_preview = inactive_preview.rename(
-                columns={
-                    "media": "媒体",
-                    "last_positive_date": "最終CV日",
-                    "recent_cv": "直近30日CV",
-                    "reason": "判定理由",
-                }
-            )
-            st.caption("過去にCV実績はあるものの、予測時点の直近30日でCVがない媒体です。定常予測の基礎値から除外します。")
-            st.dataframe(
-                inactive_preview.drop(columns=["lookback_days"], errors="ignore"),
-                width="stretch",
-                hide_index=True,
-            )
-
-    publication_factor_map = {m: 1.0 for m in selected_media}
-    publication_status_map = {m: "掲載予定" for m in selected_media}
-    continuation_table_main = pd.DataFrame()
-    if needs_normal_learning:
-        continuation_history = history_df.loc[
-            pd.to_datetime(history_df["date"], errors="coerce").dt.normalize().le(normal_learning_cutoff)
-        ].copy()
-        continuation_table_main = calculate_media_continuation_table(
-            continuation_history,
-            cpn_master=cpn_master,
-            cutoff_date=normal_learning_cutoff,
-        )
-        cont_map_main = (
-            continuation_table_main.set_index("media")["continuation_rate"].to_dict()
-            if not continuation_table_main.empty else {}
-        )
-        global_cont_main = (
-            float(continuation_table_main["global_continuation_rate"].iloc[0])
-            if not continuation_table_main.empty else 0.70
-        )
-
-        st.subheader("📌 定常媒体の掲載予定")
-        st.caption(
-            "営業側で把握している掲載予定を優先します。掲載予定は100%、掲載なしは0件、未定だけ過去の掲載継続率で期待値化します。"
-        )
-
-        status_store = st.session_state.setdefault("_publication_status_values", {})
-        for media in selected_media:
-            status_store.setdefault(str(media), "未定")
-        valid_statuses = {"掲載予定", "未定", "掲載なし"}
-        status_store = {
-            str(m): (status_store.get(str(m), "未定") if status_store.get(str(m), "未定") in valid_statuses else "未定")
-            for m in selected_media
-        }
-        st.session_state["_publication_status_values"] = status_store
-        st.session_state.setdefault("_publication_editor_version", 0)
-
-        with st.expander("📋 掲載媒体をコピペで一括設定", expanded=False):
-            st.caption(
-                "ExcelのA列=SID、B列=媒体名をそのままコピーして貼り付けてください。"
-                "記載のある媒体だけを『掲載予定』、それ以外を『掲載なし』にします。"
-            )
-            pasted_publication_text = st.text_area(
-                "掲載媒体一覧",
-                key="publication_media_paste_text",
-                height=180,
-                placeholder="123456\tモッピー\n234567\tハピタス\n345678\tLINEポイントクラブ",
-                label_visibility="collapsed",
-            )
-            if st.button(
-                "貼り付けた媒体を掲載予定に反映",
-                use_container_width=True,
-                key="publication_apply_pasted_list",
-                type="primary",
-            ):
-                media_sid_map = {}
-                if "SID" in history_df.columns:
-                    sid_src = history_df[["media", "SID"]].copy()
-                    sid_src["media"] = sid_src["media"].astype(str).str.strip()
-                    sid_src["SID"] = sid_src["SID"].map(_normalize_sid)
-                    sid_src = sid_src[sid_src["media"].isin([str(m) for m in selected_media])]
-                    sid_src = sid_src[sid_src["SID"] != ""]
-                    for media, grp in sid_src.groupby("media", sort=False):
-                        media_sid_map[str(media)] = set(grp["SID"].astype(str))
-
-                sid_to_media = {}
-                for media, sid_values in media_sid_map.items():
-                    for sid in sid_values:
-                        sid_to_media.setdefault(sid, set()).add(media)
-                name_to_media = {str(m).strip(): str(m) for m in selected_media}
-
-                matched_media = set()
-                unmatched_rows = []
-                input_rows = 0
-                for raw_line in (pasted_publication_text or "").splitlines():
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    parts = [x.strip() for x in (line.split("\t") if "\t" in line else line.split(","))]
-                    sid = _normalize_sid(parts[0]) if parts else ""
-                    media_name = parts[1].strip() if len(parts) >= 2 else ""
-                    if sid.upper() == "SID" or media_name in {"媒体", "媒体名"}:
-                        continue
-                    input_rows += 1
-
-                    row_matches = set(sid_to_media.get(sid, set())) if sid else set()
-                    if not row_matches and media_name:
-                        exact_media = name_to_media.get(media_name)
-                        if exact_media:
-                            row_matches.add(exact_media)
-                    if row_matches:
-                        matched_media.update(row_matches)
-                    else:
-                        unmatched_rows.append(line)
-
-                if input_rows == 0:
-                    st.warning("掲載媒体が入力されていません。SID・媒体名を貼り付けてください。")
-                else:
-                    st.session_state["_publication_status_values"] = {
-                        str(m): ("掲載予定" if str(m) in matched_media else "掲載なし")
-                        for m in selected_media
-                    }
-                    st.session_state["_publication_editor_version"] += 1
-                    st.session_state["_publication_paste_result"] = {
-                        "matched": len(matched_media),
-                        "none": len(selected_media) - len(matched_media),
-                        "unmatched": unmatched_rows,
-                    }
-                    st.rerun()
-
-            paste_result = st.session_state.pop("_publication_paste_result", None)
-            if paste_result:
-                st.success(
-                    f"{paste_result['matched']}媒体を掲載予定、"
-                    f"{paste_result['none']}媒体を掲載なしに設定しました。"
-                )
-                if paste_result["unmatched"]:
-                    st.warning(
-                        f"一致しなかった入力が{len(paste_result['unmatched'])}件あります。"
-                        "SIDまたは媒体名を確認してください。"
-                    )
-                    st.code("\n".join(paste_result["unmatched"][:30]))
-
-        bulk_cols = st.columns(3)
-        if bulk_cols[0].button("全て掲載予定", use_container_width=True, key="publication_all_planned"):
-            st.session_state["_publication_status_values"] = {str(m): "掲載予定" for m in selected_media}
-            st.session_state["_publication_editor_version"] += 1
-            st.rerun()
-        if bulk_cols[1].button("全て未定", use_container_width=True, key="publication_all_unknown"):
-            st.session_state["_publication_status_values"] = {str(m): "未定" for m in selected_media}
-            st.session_state["_publication_editor_version"] += 1
-            st.rerun()
-        if bulk_cols[2].button("全て掲載なし", use_container_width=True, key="publication_all_none"):
-            st.session_state["_publication_status_values"] = {str(m): "掲載なし" for m in selected_media}
-            st.session_state["_publication_editor_version"] += 1
-            st.rerun()
-
-        status_store = st.session_state["_publication_status_values"]
-        publication_editor = pd.DataFrame({
-            "媒体": selected_media,
-            "掲載状態": [status_store.get(str(m), "未定") for m in selected_media],
-        })
-        editor_key = f"normal_publication_status_editor_{st.session_state['_publication_editor_version']}"
-        edited_publication = st.data_editor(
-            publication_editor,
-            width="stretch",
-            hide_index=True,
-            disabled=["媒体"],
-            column_config={
-                "掲載状態": st.column_config.SelectboxColumn(
-                    "掲載状態",
-                    options=["掲載予定", "未定", "掲載なし"],
-                    required=True,
-                ),
-            },
-            key=editor_key,
-        )
-
-        updated_store = dict(status_store)
-        for _, r in edited_publication.iterrows():
-            media = str(r["媒体"])
-            status = str(r["掲載状態"])
-            updated_store[media] = status if status in valid_statuses else "未定"
-        st.session_state["_publication_status_values"] = updated_store
-
-        for media in selected_media:
-            media = str(media)
-            status = updated_store.get(media, "未定")
-            cont = float(cont_map_main.get(media, global_cont_main))
-            publication_status_map[media] = status
-            publication_factor_map[media] = 1.0 if status == "掲載予定" else (0.0 if status == "掲載なし" else cont)
-
-        status_counts = pd.Series([publication_status_map.get(str(m), "未定") for m in selected_media]).value_counts()
-        st.caption(
-            f"掲載予定 {int(status_counts.get('掲載予定', 0))}媒体 / "
-            f"未定 {int(status_counts.get('未定', 0))}媒体 / "
-            f"掲載なし {int(status_counts.get('掲載なし', 0))}媒体"
-        )
-
-        with st.expander("未定時の掲載継続率（分析用）"):
-            continuation_preview = pd.DataFrame({
-                "媒体": selected_media,
-                "掲載継続率(%)": [float(cont_map_main.get(m, global_cont_main)) * 100.0 for m in selected_media],
-            })
-            continuation_preview["掲載継続率(%)"] = continuation_preview["掲載継続率(%)"].clip(0, 100).round(0).astype(int)
-            st.dataframe(continuation_preview, width="stretch", hide_index=True)
-
-    with st.expander("🧪 定常バックテスト", expanded=False):
-        st.caption(
-            "対象月度の実績を予測計算から隠し、CPNマスタ上の対象月度開始日前までのデータだけで当時の定常予測を再現します。"
-            "対象月の実績は比較表示にだけ使用します。"
-        )
-        st.caption("CPN月度厳密版：検証期間・実績集計ともにCPNマスタの日付を基準にしています。")
-
-        bt_master = cpn_master.copy()
-        bt_master["日付"] = pd.to_datetime(bt_master["日付"], errors="coerce").dt.normalize()
-        bt_master["月度"] = bt_master["月度"].astype("string").str.strip()
-        bt_master["CPN名"] = bt_master["CPN名"].astype("string").str.strip()
-        bt_month_labels = _get_cpn_normal_months(bt_master)
-        bt_options = []
-        incomplete_bt_months = []
-        for m in bt_month_labels[1:]:
-            m_dates = bt_master.loc[
-                bt_master["月度"].astype(str).eq(str(m))
-                & bt_master["CPN名"].isin(normal_labels),
-                "日付",
-            ].dropna()
-            if m_dates.empty:
-                continue
-            m_end = pd.Timestamp(m_dates.max()).normalize()
-            if pd.notna(tg_raw_max_date) and pd.Timestamp(tg_raw_max_date).normalize() >= m_end:
-                bt_options.append(m)
-            else:
-                incomplete_bt_months.append((m, m_end))
-
-        if not bt_options:
-            st.info("バックテストには、CPNマスタ上の対象最終日まで実績が揃った月度が必要です。")
-        else:
-            if incomplete_bt_months:
-                latest_incomplete, latest_end = incomplete_bt_months[-1]
-                raw_last_text = pd.Timestamp(tg_raw_max_date).strftime("%Y/%m/%d") if pd.notna(tg_raw_max_date) else "-"
-                st.caption(
-                    f"未完了月度は候補から除外しています（ローデータ最終日: {raw_last_text}）。"
-                )
-            bt_target_month = st.selectbox(
-                "検証する月度",
-                options=bt_options,
-                index=len(bt_options) - 1,
-                key="normal_backtest_target_month",
-                help="月度はCPNマスタ基準です。対象月度のCPNマスタ登録日だけを予測・実績比較します。",
-            )
-
-            try:
-                bt_result = _run_normal_backtest(
-                    history_df,
-                    cpn_master,
-                    bt_target_month,
-                    auto_select_learning=False,
-                )
-                st.caption(
-                    f"検証対象: CPNマスタ {bt_result['target_month']}（定常{bt_result['target_day_count']}日） ／ "
-                    f"予測基準日: {bt_result['cutoff_date'].strftime('%Y/%m/%d')} ／ "
-                    f"学習期間: {bt_result['learning_start'].strftime('%Y/%m/%d')}〜{bt_result['cutoff_date'].strftime('%Y/%m/%d')} "
-                    f"（最大60日・定常{bt_result['learning_calendar_day_count']}日）"
-                )
-
-                st.caption(
-                    f"対象月度に実際に掲載があった {bt_result.get('published_media_count', 0):,}媒体だけを自動抽出して評価しています。"
-                )
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("予測CV", f"{bt_result.get('published_media_forecast', 0):,.0f}")
-                m2.metric("実績CV", f"{bt_result.get('published_media_actual', 0):,.0f}")
-                m3.metric(
-                    "差分",
-                    f"{bt_result.get('published_media_diff', 0):+,.0f}",
-                    delta=(
-                        f"{bt_result.get('published_media_error_rate'):+.1%}"
-                        if pd.notna(bt_result.get("published_media_error_rate"))
-                        else None
-                    ),
-                    delta_color="off",
-                )
-                m4.metric(
-                    "日次WAPE",
-                    f"{bt_result.get('published_wape'):.1%}" if pd.notna(bt_result.get("published_wape")) else "-",
-                    help="対象月度に掲載があった媒体だけの、媒体×日ごとの絶対誤差合計 ÷ 実績CV合計。小さいほど予測精度が高い指標です。",
-                )
-
-                bt_display = bt_result["media_compare"].copy()
-                bt_display["予測CV"] = bt_display["予測CV"].round(0).astype(int)
-                bt_display["実績CV"] = bt_display["実績CV"].round(0).astype(int)
-                bt_display["差分"] = bt_display["差分"].round(0).astype(int)
-                bt_display["誤差率"] = bt_display["誤差率"].map(
-                    lambda x: f"{x:+.1%}" if pd.notna(x) else "-"
-                )
-                diagnostic_cols = [
-                    "media", "学習稼働率", "稼働時日平均CV", "基礎期待CV/日", "学習対象日数", "稼働日数",
-                    "基礎CV", "曜日補正後CV", "曜日影響CV",
-                    "需要期補正後CV", "需要期影響CV",
-                    "月初月末補正後CV", "月初月末影響CV",
-                    "マジ得後補正後CV", "マジ得後影響CV",
-                    "LINE補正後CV", "LINE影響CV",
-                    "掲載判定前CV", "予測掲載継続率", "掲載継続影響CV", "対象月掲載実績",
-                    "予測CV", "実績CV", "差分", "誤差率",
-                ]
-                diagnostic_cols = [c for c in diagnostic_cols if c in bt_display.columns]
-                bt_export = bt_display[diagnostic_cols].rename(columns={"media": "媒体"})
-                numeric_diag = [c for c in bt_export.columns if c not in {"媒体", "誤差率", "対象月掲載実績"}]
-                for c in numeric_diag:
-                    bt_export[c] = pd.to_numeric(bt_export[c], errors="coerce").round(2)
-
-                bt_export_published = bt_export.loc[
-                    bt_export["対象月掲載実績"].astype(str).eq("掲載あり")
-                ].copy() if "対象月掲載実績" in bt_export.columns else bt_export.copy()
-
-                bt_month_filename = str(bt_target_month).replace("/", "-").replace(" ", "")
-                st.download_button(
-                    "📥 バックテストCSVを保存",
-                    data=bt_export_published.to_csv(index=False).encode("utf-8-sig"),
-                    file_name=f"AFF定常予測_バックテスト_{bt_month_filename}.csv",
-                    mime="text/csv",
-                    key=f"download_backtest_media_{bt_month_filename}",
-                    type="primary",
-                )
-
-                sales_cols = ["媒体", "予測CV", "実績CV", "差分", "誤差率"]
-                sales_cols = [c for c in sales_cols if c in bt_export_published.columns]
-                st.dataframe(
-                    bt_export_published[sales_cols],
-                    width="stretch",
-                    hide_index=True,
-                )
-
-                with st.expander("全媒体・掲載判定の詳細（分析用）"):
-                    b1, b2, b3 = st.columns(3)
-                    b1.metric("全媒体の最終予測", f"{bt_result.get('total_forecast', 0):,.0f}")
-                    b2.metric("掲載媒体の予測", f"{bt_result.get('published_media_forecast', 0):,.0f}")
-                    b3.metric(
-                        "掲載なし媒体への予測",
-                        f"{bt_result.get('unpublished_media_forecast', 0):,.0f}",
-                        help="対象月度のローデータに登場しなかった媒体へ残っていた予測です。",
-                    )
-                    st.dataframe(
-                        bt_export,
-                        width="stretch",
-                        hide_index=True,
-                    )
-                    st.download_button(
-                        "📥 全媒体の診断CSVを保存",
-                        data=bt_export.to_csv(index=False).encode("utf-8-sig"),
-                        file_name=f"AFF定常予測_バックテスト診断_全媒体_{bt_month_filename}.csv",
-                        mime="text/csv",
-                        key=f"download_backtest_all_media_{bt_month_filename}",
-                    )
-
-                with st.expander("学習データ診断（分析用）"):
-                    audit = bt_result.get("learning_audit", pd.DataFrame()).copy()
-                    summary = bt_result.get("learning_summary", {})
-                    if summary:
-                        first_day = summary.get("最初の日")
-                        last_day = summary.get("最後の日")
-                        first_text = pd.Timestamp(first_day).strftime("%Y/%m/%d") if pd.notna(first_day) else "-"
-                        last_text = pd.Timestamp(last_day).strftime("%Y/%m/%d") if pd.notna(last_day) else "-"
-                        a1, a2, a3, a4 = st.columns(4)
-                        a1.metric("学習実績日数", f"{summary.get('実績存在日数', 0):,}日")
-                        a2.metric("学習CV合計", f"{summary.get('CV合計', 0):,.0f}")
-                        a3.metric("学習媒体数", f"{summary.get('媒体数', 0):,}")
-                        a4.metric("元データ行数", f"{summary.get('元データ行数', 0):,}")
-                        st.caption(
-                            f"実際に学習対象として抽出した期間: {first_text}〜{last_text} ／ "
-                            f"異常値・マジ得直後の除外媒体日: {summary.get('除外媒体日数', 0):,} ／ "
-                            f"休眠除外媒体: {summary.get('休眠除外媒体数', 0):,}"
-                        )
-                    if not audit.empty:
-                        for c in ["CPN最初の日", "CPN最後の日"]:
-                            audit[c] = pd.to_datetime(audit[c], errors="coerce").dt.strftime("%Y/%m/%d").fillna("-")
-                        audit["CV合計"] = pd.to_numeric(audit["CV合計"], errors="coerce").fillna(0).round(0).astype(int)
-                        st.dataframe(audit, width="stretch", hide_index=True)
-
-                with st.expander("予測ロジック詳細（分析用）"):
-                    st.dataframe(
-                        bt_export,
-                        width="stretch",
-                        hide_index=True,
-                    )
-
-                inactive_bt = bt_result.get("inactive_media", pd.DataFrame())
-                if not inactive_bt.empty:
-                    st.caption(f"休眠判定で定常予測から除外: {len(inactive_bt):,}媒体")
-
-                with st.expander("バックテスト日別明細"):
-                    bt_daily = bt_result["daily_compare"].copy()
-                    bt_daily["date"] = pd.to_datetime(bt_daily["date"]).dt.strftime("%Y/%m/%d")
-                    bt_daily = bt_daily.rename(
-                        columns={
-                            "date": "日付",
-                            "media": "媒体",
-                            "forecast_cv": "予測CV",
-                            "actual_cv": "実績CV",
-                        }
-                    )
-                    st.dataframe(
-                        bt_daily[["日付", "媒体", "予測CV", "実績CV", "差分"]].round(2),
-                        width="stretch",
-                        hide_index=True,
-                    )
-                    bt_daily_export = bt_daily[["日付", "媒体", "予測CV", "実績CV", "差分"]].round(2)
-                    st.download_button(
-                        "📥 日別明細をCSVで保存",
-                        data=bt_daily_export.to_csv(index=False).encode("utf-8-sig"),
-                        file_name=f"AFF定常予測_バックテスト日別_{bt_month_filename}.csv",
-                        mime="text/csv",
-                        key=f"download_backtest_daily_{bt_month_filename}",
-                    )
-            except Exception as bt_exc:
-                st.warning(f"バックテストを実行できませんでした: {bt_exc}")
-
-    reference_key = tuple(
-        (
-            seg["label"],
-            seg["cpn"],
-            str(seg["start"]),
-            str(seg["end"]),
-            seg["reference_key"],
-        )
-        for seg in segment_bases
-    )
-
-    calc_key = (
-        tuple(selected_media),
-        tuple(selected_product_ids),
-        bool(exclude_compensation),
-        reference_key,
-        opt_mode,
-        len(base_pair),
-        round(float(pd.to_numeric(base_pair["base_cv"], errors="coerce").fillna(0).sum()), 6),
-        round(float(pd.to_numeric(base_pair["cost"], errors="coerce").fillna(0).sum()), 2),
-        tuple((m, publication_status_map.get(m, "掲載予定"), round(float(publication_factor_map.get(m, 1.0)), 6)) for m in selected_media),
-    )
-
-    cached_calc = st.session_state.get("_planning_calc")
-
-    if (
-        cached_calc is not None
-        and st.session_state.get("_planning_calc_key") == calc_key
-    ):
-        forecast_df = cached_calc["forecast_df"]
-        sim_df = cached_calc["sim_df"]
-        sim_summary = cached_calc["sim_summary"]
-        opt_df = cached_calc["opt_df"]
-        opt_summary = cached_calc["opt_summary"]
-
-        sim_report_table = cached_calc.get("sim_report_table")
-        opt_report_table = cached_calc.get("opt_report_table")
-
-        if sim_report_table is None:
-            sim_report_table = create_report_table(sim_summary)
-            cached_calc["sim_report_table"] = sim_report_table
-
-        if opt_report_table is None:
-            opt_report_table = create_report_table(opt_summary)
-            cached_calc["opt_report_table"] = opt_report_table
-
-    else:
-        future_parts = []
-        for seg in segment_bases:
-            future_dates = pd.date_range(start=seg["start"], end=seg["end"])
-            part = pd.DataFrame({"date": future_dates}).merge(
-                seg["base_pair"],
-                how="cross",
-            )
-            part["weekday"] = part["date"].dt.day_name()
-            part = add_business_edge_flags(part)
-
-            # CPNマスタからは月度・特殊日フラグだけ取得。
-            # 施策名そのものはUI選択を正とする。
-            part = part.merge(
-                cpn_master[
-                    [
-                        "日付",
-                        "月度",
-                        "line_oa_flag",
-                        "magitoku_after_flag",
-                    ]
-                ],
-                left_on="date",
-                right_on="日付",
-                how="left",
-            )
-            part["CPN名"] = seg["cpn"]
-            part["planning_segment"] = seg["label"]
-            part["月度"] = (
-                part["月度"]
-                .astype("string")
-                .str.strip()
-                .replace("", pd.NA)
-                .fillna(pd.Series(part["date"].dt.strftime("%Y年%m月度"), index=part.index))
-            )
-            part["line_oa_flag"] = part["line_oa_flag"].fillna(0).astype(int)
-            part["magitoku_after_flag"] = part["magitoku_after_flag"].fillna(0).astype(int)
-            part["cpn_factor"] = 1.0
-            future_parts.append(part)
-
-        future_df = pd.concat(future_parts, ignore_index=True)
-        forecast_df = forecast_cv(future_df, factor_tables)
-
-        forecast_df = enforce_premium_media_cost(
-            forecast_df
-        )
-
-        forecast_df["掲載状態"] = forecast_df["media"].map(publication_status_map).fillna("掲載予定")
-        forecast_df["掲載係数"] = forecast_df["media"].map(publication_factor_map).fillna(1.0)
-        normal_pub_mask = forecast_df["CPN名"].astype(str).str.strip().isin(normal_labels)
-        forecast_df["forecast_cv_before_publication"] = forecast_df["forecast_cv"]
-        forecast_df.loc[normal_pub_mask, "forecast_cv"] = (
-            pd.to_numeric(forecast_df.loc[normal_pub_mask, "forecast_cv"], errors="coerce").fillna(0.0)
-            * pd.to_numeric(forecast_df.loc[normal_pub_mask, "掲載係数"], errors="coerce").fillna(1.0)
-        )
-        forecast_df.loc[normal_pub_mask, "cost"] = (
-            pd.to_numeric(forecast_df.loc[normal_pub_mask, "cost"], errors="coerce").fillna(0.0)
-            * pd.to_numeric(forecast_df.loc[normal_pub_mask, "掲載係数"], errors="coerce").fillna(1.0)
-        )
-
-        _plan_period_metrics = _calculate_period_media_metrics(history_df)
-        is_magi_plan = forecast_df["CPN名"].astype(str).str.strip().eq("マジ得")
-        normal_rate_map = _plan_period_metrics["normal_rate"]
-        magi_rate_map = _plan_period_metrics["magi_rate"]
-        normal_unit_map = _plan_period_metrics["normal_unit"]
-        magi_unit_map = _plan_period_metrics["magi_unit"]
-        forecast_df["approval_rate"] = [
-            (magi_rate_map.get(str(m), _plan_period_metrics["magi_rate_all"]) if magi
-             else normal_rate_map.get(str(m), _plan_period_metrics["normal_rate_all"]))
-            for m, magi in zip(forecast_df["media"], is_magi_plan)
-        ]
-        forecast_df["gross_unit"] = [
-            (magi_unit_map.get(str(m), _plan_period_metrics["magi_unit_all"]) if magi
-             else normal_unit_map.get(str(m), _plan_period_metrics["normal_unit_all"]))
-            for m, magi in zip(forecast_df["media"], is_magi_plan)
-        ]
-        forecast_df["approval_rate"] = pd.to_numeric(forecast_df["approval_rate"], errors="coerce").fillna(0.0).clip(0, 1)
-        forecast_df["gross_unit"] = pd.to_numeric(forecast_df["gross_unit"], errors="coerce").fillna(0.0)
-
-        forecast_df = forecast_df.copy()
-        forecast_df["date"] = format_date(
-            forecast_df
-        )
-
-        sim_df = simulate_plan(
-            forecast_df
-        )
-
-        sim_df = sim_df.copy()
-        if "approved_cv" not in sim_df.columns:
-            cv_s = pd.to_numeric(sim_df.get("cv", pd.Series(0.0, index=sim_df.index)), errors="coerce").fillna(0.0)
-            rate_s = pd.to_numeric(sim_df.get("approval_rate", pd.Series(0.0, index=sim_df.index)), errors="coerce").fillna(0.0).clip(0, 1)
-            sim_df["approved_cv"] = cv_s * rate_s
-        if "cpa" not in sim_df.columns and "gross_unit" in sim_df.columns:
-            sim_df["cpa"] = pd.to_numeric(sim_df["gross_unit"], errors="coerce").fillna(0.0)
-        if "cost" not in sim_df.columns:
-            unit_s = pd.to_numeric(sim_df.get("cpa", pd.Series(0.0, index=sim_df.index)), errors="coerce").fillna(0.0)
-            sim_df["cost"] = pd.to_numeric(sim_df["approved_cv"], errors="coerce").fillna(0.0) * unit_s
-
-        sim_group_cols = ["date", "media", "plan"]
-        if "CPN名" in sim_df.columns:
-            sim_group_cols.append("CPN名")
-        sim_df = sim_df.copy()
-        for _col in ["date", "media", "plan", "cv", "cost", "approved_cv", "cpa"]:
-            if _col not in sim_df.columns:
-                sim_df[_col] = pd.Series(dtype="object" if _col in {"date", "media", "plan"} else "float64")
-        sim_df["_unit_weight"] = pd.to_numeric(sim_df["cpa"], errors="coerce").fillna(0) * pd.to_numeric(sim_df["cv"], errors="coerce").fillna(0)
-        sim_summary = (
-            sim_df.groupby(
-                sim_group_cols,
-                as_index=False,
-            )
-            .agg(
-                cv=("cv", "sum"),
-                cost=("cost", "sum"),
-                approved_cv=("approved_cv", "sum"),
-                _unit_weight=("_unit_weight", "sum"),
-            )
-        )
-        sim_summary["cpa"] = (
-            sim_summary["_unit_weight"]
-            / sim_summary["cv"].replace(0, pd.NA)
-        ).fillna(0)
-        sim_summary = sim_summary.drop(columns=["_unit_weight"])
-
-        sim_summary["date"] = format_date(
-            sim_summary
-        )
-
-        opt_df = optimize_budget(
-            sim_df,
-            opt_mode,
-        )
-
-        opt_group_cols = ["date", "media", "plan"]
-        if "CPN名" in opt_df.columns:
-            opt_group_cols.append("CPN名")
-        opt_df = opt_df.copy()
-        for _col in ["date", "media", "plan", "cv", "cost", "approved_cv", "cpa"]:
-            if _col not in opt_df.columns:
-                opt_df[_col] = pd.Series(dtype="object" if _col in {"date", "media", "plan"} else "float64")
-        opt_df["_unit_weight"] = pd.to_numeric(opt_df["cpa"], errors="coerce").fillna(0) * pd.to_numeric(opt_df["cv"], errors="coerce").fillna(0)
-        opt_summary = (
-            opt_df.groupby(
-                opt_group_cols,
-                as_index=False,
-            )
-            .agg(
-                cv=("cv", "sum"),
-                cost=("cost", "sum"),
-                approved_cv=("approved_cv", "sum"),
-                _unit_weight=("_unit_weight", "sum"),
-            )
-        )
-        opt_summary["cpa"] = (
-            opt_summary["_unit_weight"]
-            / opt_summary["cv"].replace(0, pd.NA)
-        ).fillna(0)
-        opt_summary = opt_summary.drop(columns=["_unit_weight"])
-
-        opt_summary["date"] = format_date(
-            opt_summary
-        )
-
-        st.session_state["_planning_calc_key"] = calc_key
-        sim_report_table = create_report_table(sim_summary)
-        opt_report_table = create_report_table(opt_summary)
-
-        st.session_state["_planning_calc"] = {
-            "forecast_df": forecast_df,
-            "sim_df": sim_df,
-            "sim_summary": sim_summary,
-            "opt_df": opt_df,
-            "opt_summary": opt_summary,
-            "sim_report_table": sim_report_table,
-            "opt_report_table": opt_report_table,
-        }
-
-        st.session_state.pop("submission_excel", None)
-
-    if needs_normal_learning and not forecast_df.empty:
-        normal_pub_summary_mask = forecast_df["CPN名"].astype(str).str.strip().isin(normal_labels)
-        normal_pub_rows = forecast_df.loc[normal_pub_summary_mask].copy()
-        if not normal_pub_rows.empty:
-            normal_pub_rows["forecast_cv_before_publication"] = pd.to_numeric(
-                normal_pub_rows.get("forecast_cv_before_publication", normal_pub_rows["forecast_cv"]),
-                errors="coerce",
-            ).fillna(0.0)
-            normal_pub_rows["forecast_cv"] = pd.to_numeric(normal_pub_rows["forecast_cv"], errors="coerce").fillna(0.0)
-            pub_total_before = float(normal_pub_rows["forecast_cv_before_publication"].sum())
-            pub_total_after = float(normal_pub_rows["forecast_cv"].sum())
-            pub_impact = pub_total_after - pub_total_before
-
-            st.subheader("📌 掲載状態反映後の定常予測")
-            sm1, sm2, sm3 = st.columns(3)
-            sm1.metric("掲載判定前CV", f"{pub_total_before:,.0f}")
-            sm2.metric("掲載状態反映後CV", f"{pub_total_after:,.0f}")
-            sm3.metric("掲載状態による増減", f"{pub_impact:+,.0f}")
-
-            pub_media = (
-                normal_pub_rows.groupby("media", as_index=False)
-                .agg(
-                    掲載判定前CV=("forecast_cv_before_publication", "sum"),
-                    予測CV=("forecast_cv", "sum"),
-                )
-            )
-            pub_media["掲載状態"] = pub_media["media"].map(publication_status_map).fillna("掲載予定")
-            pub_media = pub_media.rename(columns={"media": "媒体"})
-            pub_media["予測CV"] = pub_media["予測CV"].round(0).astype(int)
-            pub_media["掲載判定前CV"] = pub_media["掲載判定前CV"].round(0).astype(int)
-            pub_media = pub_media.sort_values(["予測CV", "掲載判定前CV"], ascending=False)
-            st.dataframe(
-                pub_media[["媒体", "掲載状態", "予測CV"]],
-                width="stretch",
-                hide_index=True,
-            )
-            with st.expander("掲載状態による補正詳細（分析用）"):
-                detail = pub_media.copy()
-                detail["増減CV"] = detail["予測CV"] - detail["掲載判定前CV"]
-                st.dataframe(
-                    detail[["媒体", "掲載状態", "掲載判定前CV", "予測CV", "増減CV"]],
-                    width="stretch",
-                    hide_index=True,
-                )
-
-    with st.expander("予測係数の確認"):
-        factor_cols = [
-            "date",
-            "media",
+        default_product_ids = list(all_product_ids)
+        selected_product_ids = st.sidebar.multiselect(
             "商品ID",
-            "base_cv",
-            "cpn_factor",
-            "unit_price_factor",
-            "unit_price_reference",
-            "unit_price_latest",
-            "unit_price_elasticity",
-            "weekday_factor",
-            "season_factor",
-            "month_edge_factor",
-            "after_factor",
-            "line_factor",
-            "forecast_cv",
-            "cost",
+            all_product_ids,
+            default=default_product_ids,
+        )
+        if not selected_product_ids:
+            st.stop()
+
+        history_df = history_df[
+            history_df["商品ID"].astype(str).isin(selected_product_ids)
+        ].copy()
+
+        st.sidebar.header("媒体選択")
+        all_categories = sorted(history_df["media_category"].dropna().astype(str).unique())
+        selected_categories = st.sidebar.multiselect(
+            "カテゴリ",
+            all_categories,
+            default=all_categories,
+        )
+        if not selected_categories:
+            st.stop()
+
+        history_df = history_df[
+            history_df["media_category"].isin(selected_categories)
+        ].copy()
+
+        all_media = sorted(history_df["media"].dropna().astype(str).unique())
+        default_media = [
+            m for m in all_media
+            if "計測" not in m
         ]
 
-        available_factor_cols = [
-            c for c in factor_cols
-            if c in forecast_df.columns
-        ]
+        selected_media = st.sidebar.multiselect(
+            "媒体",
+            all_media,
+            default=default_media,
+        )
 
+        if not selected_media:
+            st.stop()
+
+        history_df = history_df[
+            history_df["media"].isin(selected_media)
+        ].copy()
+
+        with tab_competitor, competitor_history_slot.container():
+            show_competitor_cv_analysis(history_df)
+
+        with tab_history:
+            history_analytics_placeholder = st.empty()
+        try:
+            _period_preview = _calculate_period_media_metrics(history_df)
+            approval_preview = pd.DataFrame(
+                [
+                    {
+                        "媒体": media,
+                        "定常承認率": _period_preview["normal_rate"].get(
+                            media,
+                            _period_preview["normal_rate_all"],
+                        ),
+                        "マジ得承認率": _period_preview["magi_rate"].get(
+                            media,
+                            _period_preview["magi_rate_all"],
+                        ),
+                        "定常単価": _period_preview["normal_unit"].get(
+                            media,
+                            _period_preview["normal_unit_all"],
+                        ),
+                        "マジ得単価": _period_preview["magi_unit"].get(
+                            media,
+                            _period_preview["magi_unit_all"],
+                        ),
+                    }
+                    for media in selected_media
+                ]
+            )
+
+            approval_preview["定常承認率"] = approval_preview["定常承認率"].map(
+                lambda x: f"{x:.1%}"
+            )
+            approval_preview["マジ得承認率"] = approval_preview["マジ得承認率"].map(
+                lambda x: f"{x:.1%}"
+            )
+            approval_preview["定常単価"] = approval_preview["定常単価"].map(
+                lambda x: f"¥{x:,.0f}"
+            )
+            approval_preview["マジ得単価"] = approval_preview["マジ得単価"].map(
+                lambda x: f"¥{x:,.0f}"
+            )
+
+            with st.expander("✅ 定常・マジ得の過去実績指標"):
+                st.caption(
+                    "承認率 = 成果承認フラグYの件数 ÷ 全件数 / "
+                    "単価 = ローデータW列『グロス』の直近実績"
+                )
+                st.dataframe(
+                    approval_preview,
+                    width="stretch",
+                    hide_index=True,
+                )
+
+        except ValueError as approval_exc:
+            st.warning(
+                "定常・マジ得指標を算出できません。"
+                f"{approval_exc}"
+            )
+
+        st.sidebar.header("📊 対象期間・施策")
+
+        cpn_list = sorted(
+            cpn_master["CPN名"]
+            .dropna()
+            .astype(str)
+            .unique()
+        )
+        if not cpn_list:
+            st.error("CPNマスタに選択可能な施策がありません。")
+            st.stop()
+
+        normal_labels = {"通常", "定常"}
+        default_primary = next((x for x in ["定常", "通常"] if x in cpn_list), cpn_list[0])
+        today = datetime.date.today()
+
+        selected_cpn_1 = st.sidebar.selectbox(
+            "施策①",
+            cpn_list,
+            index=cpn_list.index(default_primary),
+            key="planning_cpn_1",
+        )
+        start_date_1 = st.sidebar.date_input(
+            "施策① 開始",
+            today,
+            key="planning_start_1",
+        )
+        end_date_1 = st.sidebar.date_input(
+            "施策① 終了",
+            today + datetime.timedelta(days=7),
+            key="planning_end_1",
+        )
+
+        use_second_period = st.sidebar.toggle(
+            "施策②を追加",
+            value=False,
+            key="planning_use_second",
+        )
+
+        selected_cpn_2 = None
+        start_date_2 = None
+        end_date_2 = None
+        if use_second_period:
+            default_second = "マジ得" if "マジ得" in cpn_list else cpn_list[0]
+            selected_cpn_2 = st.sidebar.selectbox(
+                "施策②",
+                cpn_list,
+                index=cpn_list.index(default_second),
+                key="planning_cpn_2",
+            )
+            start_date_2 = st.sidebar.date_input(
+                "施策② 開始",
+                end_date_1 + datetime.timedelta(days=1),
+                key="planning_start_2",
+            )
+            end_date_2 = st.sidebar.date_input(
+                "施策② 終了",
+                end_date_1 + datetime.timedelta(days=7),
+                key="planning_end_2",
+            )
+
+        planning_segments = [
+            {"label": "施策①", "cpn": selected_cpn_1, "start": start_date_1, "end": end_date_1}
+        ]
+        if use_second_period:
+            planning_segments.append(
+                {"label": "施策②", "cpn": selected_cpn_2, "start": start_date_2, "end": end_date_2}
+            )
+
+        for seg in planning_segments:
+            if seg["start"] > seg["end"]:
+                st.error(f"{seg['label']}の開始日は終了日以前にしてください。")
+                st.stop()
+
+        if use_second_period:
+            r1 = pd.date_range(start_date_1, end_date_1)
+            r2 = pd.date_range(start_date_2, end_date_2)
+            if len(r1.intersection(r2)) > 0:
+                st.error("施策①と施策②の期間が重複しています。期間が重ならないように設定してください。")
+                st.stop()
+
+        needs_normal_learning = any(seg["cpn"] in normal_labels for seg in planning_segments)
+        selected_learning_months = []
+        normal_training_df = history_df
+        normal_learning_calendar_dates = None
+        normal_learning_start = None
+        normal_learning_cutoff = None
+        if needs_normal_learning:
+            history_dates = pd.to_datetime(history_df["date"], errors="coerce").dt.normalize()
+            available_history_dates = history_dates.dropna()
+            if available_history_dates.empty:
+                st.error("利用可能な実績データがありません。")
+                st.stop()
+            normal_learning_cutoff = pd.Timestamp(available_history_dates.max()).normalize()
+            requested_normal_learning_start = normal_learning_cutoff - pd.Timedelta(days=59)
+            earliest_history_date = pd.Timestamp(available_history_dates.min()).normalize()
+            normal_learning_start = max(requested_normal_learning_start, earliest_history_date)
+            normal_training_df = history_df.loc[
+                history_dates.between(normal_learning_start, normal_learning_cutoff)
+            ].copy()
+            normal_learning_calendar_dates = (
+                cpn_master.loc[
+                    pd.to_datetime(cpn_master["日付"], errors="coerce").dt.normalize()
+                    .between(normal_learning_start, normal_learning_cutoff)
+                    & cpn_master["CPN名"].astype(str).str.strip().isin(normal_labels),
+                    "日付",
+                ]
+                .pipe(pd.to_datetime, errors="coerce")
+                .dropna().dt.normalize().drop_duplicates().sort_values().tolist()
+            )
+            selected_learning_months = (
+                normal_training_df.loc[normal_training_df["CPN名"].isin(normal_labels), "月度"]
+                .dropna().astype(str).loc[lambda x: x.ne("未設定")].drop_duplicates().tolist()
+            )
+            if not normal_learning_calendar_dates:
+                st.error("ローデータ最新日基準の利用可能期間内にCPNマスタの定常日がありません。")
+                st.stop()
+            st.sidebar.caption(
+                f"定常学習: {normal_learning_start.strftime('%Y/%m/%d')}〜"
+                f"{normal_learning_cutoff.strftime('%Y/%m/%d')}（最大60日・利用可能実績を使用）"
+            )
+
+        segment_bases = []
+        reference_descriptions = []
+
+        for seg_idx, seg in enumerate(planning_segments, start=1):
+            selected_cpn = seg["cpn"]
+            if selected_cpn in normal_labels:
+                base_pair_seg = _calculate_normal_month_base(
+                    normal_training_df,
+                    selected_learning_months,
+                    calendar_dates=normal_learning_calendar_dates,
+                )
+                if base_pair_seg.empty:
+                    st.error("予測開始日前の利用可能期間に定常実績がありません。")
+                    st.stop()
+                reference_key_seg = ("normal_60days", str(normal_learning_start), str(normal_learning_cutoff))
+                reference_descriptions.append(
+                    f"{seg['label']} {selected_cpn}: 定常学習 最大60日 "
+                    f"({normal_learning_start.strftime('%Y/%m/%d')}〜{normal_learning_cutoff.strftime('%Y/%m/%d')})"
+                )
+            else:
+                available_periods = get_cpn_reference_periods(history_df, selected_cpn)
+                if not available_periods:
+                    st.error(f"実績内に『{selected_cpn}』のキャンペーン期間がありません。")
+                    st.stop()
+
+                period_options = {
+                    f"{p_start.strftime('%Y/%m/%d')} ～ {p_end.strftime('%Y/%m/%d')}": (p_start, p_end)
+                    for p_start, p_end in available_periods
+                }
+                selected_period_labels = st.sidebar.multiselect(
+                    f"{seg['label']} {selected_cpn} 参照期間",
+                    options=list(period_options.keys()),
+                    default=list(period_options.keys()),
+                    key=f"cpn_reference_periods_{seg_idx}",
+                )
+                if not selected_period_labels:
+                    st.warning(f"{seg['label']}の参照期間を1つ以上選択してください。")
+                    st.stop()
+                selected_periods = [period_options[label] for label in selected_period_labels]
+                base_pair_seg = calculate_selected_cpn_base(
+                    history_df,
+                    selected_cpn,
+                    selected_periods,
+                )
+                if base_pair_seg.empty:
+                    st.error(f"{seg['label']}の選択参照期間に対象媒体の実績がありません。")
+                    st.stop()
+                reference_key_seg = (selected_cpn, tuple(selected_period_labels))
+                reference_descriptions.append(
+                    f"{seg['label']} {selected_cpn}: " + " / ".join(selected_period_labels)
+                )
+
+            base_pair_seg = base_pair_seg[base_pair_seg["media"].isin(selected_media)].copy()
+            if base_pair_seg.empty:
+                st.error(f"{seg['label']}の学習実績に対象媒体がありません。")
+                st.stop()
+            segment_bases.append(
+                {**seg, "base_pair": base_pair_seg, "reference_key": reference_key_seg}
+            )
+
+        st.subheader("📈 予測ベース")
+        st.caption(
+            "定常は選択月度の定常日平均、その他施策は選択した過去CPN期間の日平均を使用します。"
+        )
+        for desc in reference_descriptions:
+            st.write(f"・{desc}")
+
+        base_preview_rows = []
+        for seg in segment_bases:
+            tmp = (
+                seg["base_pair"].groupby("media", as_index=False)
+                .agg(base_cv=("base_cv", "sum"), cost=("cost", "sum"))
+            )
+            tmp["施策"] = seg["label"] + "：" + seg["cpn"]
+            base_preview_rows.append(tmp)
+        base_preview = pd.concat(base_preview_rows, ignore_index=True)
+        base_preview = base_preview.rename(
+            columns={"media": "媒体", "base_cv": "基礎CV/日", "cost": "基礎COST/日"}
+        )
+        base_preview["基礎CV/日"] = base_preview["基礎CV/日"].round(2)
+        base_preview["基礎COST/日"] = base_preview["基礎COST/日"].round(0)
         st.dataframe(
-            forecast_df[available_factor_cols],
+            base_preview[["施策", "媒体", "基礎CV/日", "基礎COST/日"]],
             width="stretch",
             hide_index=True,
         )
 
-    st.subheader("📊 松竹梅")
-    st.dataframe(
-        sim_report_table,
-        width="stretch",
-    )
+        selected_cpn = selected_cpn_1
+        start_date = min(seg["start"] for seg in planning_segments)
+        end_date = max(seg["end"] for seg in planning_segments)
+        base_pair = pd.concat([seg["base_pair"] for seg in segment_bases], ignore_index=True)
 
-    st.subheader("🚀 最適プラン")
-    st.dataframe(
-        opt_report_table,
-        width="stretch",
-    )
+        st.sidebar.header("🎯 最適化ロジック")
 
-    st.subheader("✍️ 手動設定")
-    st.caption(
-        "初期件数は掲載状態反映後のForecast、単価・承認率は最適プランと過去実績から自動設定。"
-        "グロス単価・承認率・採用件数を編集すると、費用は自動計算されます。"
-        "承認件数と発行CPAは入力内容から自動計算します。"
-    )
-
-    render_manual_settings(
-        opt_summary=opt_summary,
-        history_df=history_df,
-        selected_cpn=selected_cpn,
-        calc_key=calc_key,
-        forecast_df=forecast_df,
-    )
-
-    current_manual_for_chart = _normalize_manual_settings(
-        st.session_state.get(
-            "_manual_settings",
-            _build_manual_settings_defaults(
-                opt_summary=opt_summary,
-                history_df=history_df,
-                selected_cpn=selected_cpn,
-                forecast_df=forecast_df,
-            ),
+        opt_mode = st.sidebar.radio(
+            "最適基準",
+            ["単価最小", "CV最大"],
+            index=1,
         )
-    )
 
-    current_manual_magitoku_for_chart = pd.DataFrame()
-    if (
-        not current_manual_for_chart.empty
-        and "CPN名" in opt_summary.columns
-        and (opt_summary["CPN名"].astype(str).str.strip() == "マジ得").any()
-    ):
-        mix = opt_summary.copy()
-        mix["media"] = mix["media"].astype(str)
-        mix["cv"] = pd.to_numeric(mix["cv"], errors="coerce").fillna(0.0)
-        mix["CPN名"] = mix["CPN名"].astype(str).str.strip()
-        total_cv = mix.groupby("media")["cv"].sum()
-        magi_cv = mix.loc[mix["CPN名"].eq("マジ得")].groupby("media")["cv"].sum()
-        magi_ratio = (magi_cv / total_cv.replace(0, pd.NA)).fillna(0.0).clip(0, 1)
+        factor_cache_key = (
+            tuple(selected_media),
+            tuple(selected_product_ids),
+            bool(exclude_compensation),
+            len(history_df),
+            str(history_df["date"].min()),
+            str(history_df["date"].max()),
+            float(pd.to_numeric(history_df["cv"], errors="coerce").fillna(0).sum()),
+            float(pd.to_numeric(history_df["cost"], errors="coerce").fillna(0).sum()),
+            (str(normal_learning_start), str(normal_learning_cutoff)) if needs_normal_learning else (),
+        )
 
-        current_manual_magitoku_for_chart = current_manual_for_chart.copy()
-        current_manual_magitoku_for_chart["_magi_ratio"] = (
-            current_manual_magitoku_for_chart["媒体名"].astype(str).map(magi_ratio).fillna(0.0)
-        )
-        current_manual_magitoku_for_chart["今回採用件数"] = (
-            pd.to_numeric(
-                current_manual_magitoku_for_chart["今回採用件数"], errors="coerce"
-            ).fillna(0.0)
-            * current_manual_magitoku_for_chart["_magi_ratio"]
-        )
-        current_manual_magitoku_for_chart = current_manual_magitoku_for_chart.drop(
-            columns=["_magi_ratio"]
-        )
-        current_manual_magitoku_for_chart = _normalize_manual_settings(
-            current_manual_magitoku_for_chart
-        )
-        current_manual_magitoku_for_chart = current_manual_magitoku_for_chart.loc[
-            current_manual_magitoku_for_chart["今回採用件数"] > 0
-        ].copy()
-
-    try:
-        with history_analytics_placeholder.container():
-            render_history_analytics(
-                history_df,
-                current_plan_df=current_manual_for_chart,
-                current_plan_magitoku_df=current_manual_magitoku_for_chart,
+        if st.session_state.get("_factor_cache_key") == factor_cache_key:
+            factor_tables = st.session_state["_factor_tables"]
+        else:
+            factor_tables = calculate_dynamic_factor_tables(
+                normal_training_df if needs_normal_learning else history_df,
+                selected_learning_months if needs_normal_learning else None,
+                calendar_dates=normal_learning_calendar_dates if needs_normal_learning else None,
             )
-    except ValueError as analytics_exc:
-        with history_analytics_placeholder.container():
-            st.warning(f"月度別実績を集計できません。{analytics_exc}")
+            st.session_state["_factor_cache_key"] = factor_cache_key
+            st.session_state["_factor_tables"] = factor_tables
 
-    submission_month_label, submission_year, submission_month = _resolve_submission_cpn_month(
-        cpn_master, start_date, end_date
-    )
-    submission_filename = (
-        f"【提出用】楽天カード"
-        f"{submission_year}年{submission_month}月度"
-        f"プランニング.xlsx"
-    )
+        st.subheader("📐 実績から算出した変動係数")
 
-    manual_settings_for_export = _normalize_manual_settings(
-        st.session_state.get(
-            "_manual_settings",
-            _build_manual_settings_defaults(
-                opt_summary=opt_summary,
-                history_df=history_df,
-                selected_cpn=selected_cpn,
-                forecast_df=forecast_df,
-            ),
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(
+            ["曜日", "月初・月末", "需要期", "LINE OA", "学習除外日", "休眠媒体"]
         )
-    )
 
-    render_submission_download(
-        opt_summary=opt_summary,
-        history_df=history_df,
-        cpn_master=cpn_master,
-        manual_settings=manual_settings_for_export,
-        start_date=start_date,
-        end_date=end_date,
-        selected_cpn=selected_cpn,
-        opt_mode=opt_mode,
-        submission_filename=submission_filename,
-    )
+        with tab1:
+            st.dataframe(
+                factor_tables["weekday"].round(3),
+                width="stretch",
+                hide_index=True,
+            )
+
+        with tab2:
+            st.dataframe(
+                factor_tables["month_edge"].round(3),
+                width="stretch",
+                hide_index=True,
+            )
+
+        with tab3:
+            st.dataframe(
+                factor_tables["season"].round(3),
+                width="stretch",
+                hide_index=True,
+            )
+
+        with tab4:
+            if factor_tables["line_oa"].empty:
+                st.info(
+                    "過去のLINE OA配信実績がないため、"
+                    "LINE OA係数は1.0です。"
+                )
+            else:
+                st.dataframe(
+                    factor_tables["line_oa"].round(3),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+
+        with tab5:
+            excluded = factor_tables.get("excluded", pd.DataFrame())
+            if excluded.empty:
+                st.info("マジ得直後・異常値による学習除外日はありません。")
+            else:
+                preview_excluded = excluded.copy()
+                if "date" in preview_excluded.columns:
+                    preview_excluded["date"] = pd.to_datetime(preview_excluded["date"]).dt.strftime("%Y/%m/%d")
+                st.caption("定常の基礎値・変動係数の学習から除外した媒体×日です。予測対象実績そのものは削除しません。")
+                st.dataframe(
+                    preview_excluded.round(3),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+        with tab6:
+            inactive_media = factor_tables.get("inactive_media", pd.DataFrame())
+            if inactive_media.empty:
+                st.info("直近30日CVなしで休眠判定された媒体はありません。")
+            else:
+                inactive_preview = inactive_media.copy()
+                if "last_positive_date" in inactive_preview.columns:
+                    inactive_preview["last_positive_date"] = pd.to_datetime(
+                        inactive_preview["last_positive_date"]
+                    ).dt.strftime("%Y/%m/%d")
+                inactive_preview = inactive_preview.rename(
+                    columns={
+                        "media": "媒体",
+                        "last_positive_date": "最終CV日",
+                        "recent_cv": "直近30日CV",
+                        "reason": "判定理由",
+                    }
+                )
+                st.caption("過去にCV実績はあるものの、予測時点の直近30日でCVがない媒体です。定常予測の基礎値から除外します。")
+                st.dataframe(
+                    inactive_preview.drop(columns=["lookback_days"], errors="ignore"),
+                    width="stretch",
+                    hide_index=True,
+                )
+
+        publication_factor_map = {m: 1.0 for m in selected_media}
+        publication_status_map = {m: "掲載予定" for m in selected_media}
+        continuation_table_main = pd.DataFrame()
+        if needs_normal_learning:
+            continuation_history = history_df.loc[
+                pd.to_datetime(history_df["date"], errors="coerce").dt.normalize().le(normal_learning_cutoff)
+            ].copy()
+            continuation_table_main = calculate_media_continuation_table(
+                continuation_history,
+                cpn_master=cpn_master,
+                cutoff_date=normal_learning_cutoff,
+            )
+            cont_map_main = (
+                continuation_table_main.set_index("media")["continuation_rate"].to_dict()
+                if not continuation_table_main.empty else {}
+            )
+            global_cont_main = (
+                float(continuation_table_main["global_continuation_rate"].iloc[0])
+                if not continuation_table_main.empty else 0.70
+            )
+
+            st.subheader("📌 定常媒体の掲載予定")
+            st.caption(
+                "営業側で把握している掲載予定を優先します。掲載予定は100%、掲載なしは0件、未定だけ過去の掲載継続率で期待値化します。"
+            )
+
+            status_store = st.session_state.setdefault("_publication_status_values", {})
+            for media in selected_media:
+                status_store.setdefault(str(media), "未定")
+            valid_statuses = {"掲載予定", "未定", "掲載なし"}
+            status_store = {
+                str(m): (status_store.get(str(m), "未定") if status_store.get(str(m), "未定") in valid_statuses else "未定")
+                for m in selected_media
+            }
+            st.session_state["_publication_status_values"] = status_store
+            st.session_state.setdefault("_publication_editor_version", 0)
+
+            with st.expander("📋 掲載媒体をコピペで一括設定", expanded=False):
+                st.caption(
+                    "ExcelのA列=SID、B列=媒体名をそのままコピーして貼り付けてください。"
+                    "記載のある媒体だけを『掲載予定』、それ以外を『掲載なし』にします。"
+                )
+                pasted_publication_text = st.text_area(
+                    "掲載媒体一覧",
+                    key="publication_media_paste_text",
+                    height=180,
+                    placeholder="123456\tモッピー\n234567\tハピタス\n345678\tLINEポイントクラブ",
+                    label_visibility="collapsed",
+                )
+                if st.button(
+                    "貼り付けた媒体を掲載予定に反映",
+                    use_container_width=True,
+                    key="publication_apply_pasted_list",
+                    type="primary",
+                ):
+                    media_sid_map = {}
+                    if "SID" in history_df.columns:
+                        sid_src = history_df[["media", "SID"]].copy()
+                        sid_src["media"] = sid_src["media"].astype(str).str.strip()
+                        sid_src["SID"] = sid_src["SID"].map(_normalize_sid)
+                        sid_src = sid_src[sid_src["media"].isin([str(m) for m in selected_media])]
+                        sid_src = sid_src[sid_src["SID"] != ""]
+                        for media, grp in sid_src.groupby("media", sort=False):
+                            media_sid_map[str(media)] = set(grp["SID"].astype(str))
+
+                    sid_to_media = {}
+                    for media, sid_values in media_sid_map.items():
+                        for sid in sid_values:
+                            sid_to_media.setdefault(sid, set()).add(media)
+                    name_to_media = {str(m).strip(): str(m) for m in selected_media}
+
+                    matched_media = set()
+                    unmatched_rows = []
+                    input_rows = 0
+                    for raw_line in (pasted_publication_text or "").splitlines():
+                        line = raw_line.strip()
+                        if not line:
+                            continue
+                        parts = [x.strip() for x in (line.split("\t") if "\t" in line else line.split(","))]
+                        sid = _normalize_sid(parts[0]) if parts else ""
+                        media_name = parts[1].strip() if len(parts) >= 2 else ""
+                        if sid.upper() == "SID" or media_name in {"媒体", "媒体名"}:
+                            continue
+                        input_rows += 1
+
+                        row_matches = set(sid_to_media.get(sid, set())) if sid else set()
+                        if not row_matches and media_name:
+                            exact_media = name_to_media.get(media_name)
+                            if exact_media:
+                                row_matches.add(exact_media)
+                        if row_matches:
+                            matched_media.update(row_matches)
+                        else:
+                            unmatched_rows.append(line)
+
+                    if input_rows == 0:
+                        st.warning("掲載媒体が入力されていません。SID・媒体名を貼り付けてください。")
+                    else:
+                        st.session_state["_publication_status_values"] = {
+                            str(m): ("掲載予定" if str(m) in matched_media else "掲載なし")
+                            for m in selected_media
+                        }
+                        st.session_state["_publication_editor_version"] += 1
+                        st.session_state["_publication_paste_result"] = {
+                            "matched": len(matched_media),
+                            "none": len(selected_media) - len(matched_media),
+                            "unmatched": unmatched_rows,
+                        }
+                        st.rerun()
+
+                paste_result = st.session_state.pop("_publication_paste_result", None)
+                if paste_result:
+                    st.success(
+                        f"{paste_result['matched']}媒体を掲載予定、"
+                        f"{paste_result['none']}媒体を掲載なしに設定しました。"
+                    )
+                    if paste_result["unmatched"]:
+                        st.warning(
+                            f"一致しなかった入力が{len(paste_result['unmatched'])}件あります。"
+                            "SIDまたは媒体名を確認してください。"
+                        )
+                        st.code("\n".join(paste_result["unmatched"][:30]))
+
+            bulk_cols = st.columns(3)
+            if bulk_cols[0].button("全て掲載予定", use_container_width=True, key="publication_all_planned"):
+                st.session_state["_publication_status_values"] = {str(m): "掲載予定" for m in selected_media}
+                st.session_state["_publication_editor_version"] += 1
+                st.rerun()
+            if bulk_cols[1].button("全て未定", use_container_width=True, key="publication_all_unknown"):
+                st.session_state["_publication_status_values"] = {str(m): "未定" for m in selected_media}
+                st.session_state["_publication_editor_version"] += 1
+                st.rerun()
+            if bulk_cols[2].button("全て掲載なし", use_container_width=True, key="publication_all_none"):
+                st.session_state["_publication_status_values"] = {str(m): "掲載なし" for m in selected_media}
+                st.session_state["_publication_editor_version"] += 1
+                st.rerun()
+
+            status_store = st.session_state["_publication_status_values"]
+            publication_editor = pd.DataFrame({
+                "媒体": selected_media,
+                "掲載状態": [status_store.get(str(m), "未定") for m in selected_media],
+            })
+            editor_key = f"normal_publication_status_editor_{st.session_state['_publication_editor_version']}"
+            edited_publication = st.data_editor(
+                publication_editor,
+                width="stretch",
+                hide_index=True,
+                disabled=["媒体"],
+                column_config={
+                    "掲載状態": st.column_config.SelectboxColumn(
+                        "掲載状態",
+                        options=["掲載予定", "未定", "掲載なし"],
+                        required=True,
+                    ),
+                },
+                key=editor_key,
+            )
+
+            updated_store = dict(status_store)
+            for _, r in edited_publication.iterrows():
+                media = str(r["媒体"])
+                status = str(r["掲載状態"])
+                updated_store[media] = status if status in valid_statuses else "未定"
+            st.session_state["_publication_status_values"] = updated_store
+
+            for media in selected_media:
+                media = str(media)
+                status = updated_store.get(media, "未定")
+                cont = float(cont_map_main.get(media, global_cont_main))
+                publication_status_map[media] = status
+                publication_factor_map[media] = 1.0 if status == "掲載予定" else (0.0 if status == "掲載なし" else cont)
+
+            status_counts = pd.Series([publication_status_map.get(str(m), "未定") for m in selected_media]).value_counts()
+            st.caption(
+                f"掲載予定 {int(status_counts.get('掲載予定', 0))}媒体 / "
+                f"未定 {int(status_counts.get('未定', 0))}媒体 / "
+                f"掲載なし {int(status_counts.get('掲載なし', 0))}媒体"
+            )
+
+            with st.expander("未定時の掲載継続率（分析用）"):
+                continuation_preview = pd.DataFrame({
+                    "媒体": selected_media,
+                    "掲載継続率(%)": [float(cont_map_main.get(m, global_cont_main)) * 100.0 for m in selected_media],
+                })
+                continuation_preview["掲載継続率(%)"] = continuation_preview["掲載継続率(%)"].clip(0, 100).round(0).astype(int)
+                st.dataframe(continuation_preview, width="stretch", hide_index=True)
+
+        with st.expander("🧪 定常バックテスト", expanded=False):
+            st.caption(
+                "対象月度の実績を予測計算から隠し、CPNマスタ上の対象月度開始日前までのデータだけで当時の定常予測を再現します。"
+                "対象月の実績は比較表示にだけ使用します。"
+            )
+            st.caption("CPN月度厳密版：検証期間・実績集計ともにCPNマスタの日付を基準にしています。")
+
+            bt_master = cpn_master.copy()
+            bt_master["日付"] = pd.to_datetime(bt_master["日付"], errors="coerce").dt.normalize()
+            bt_master["月度"] = bt_master["月度"].astype("string").str.strip()
+            bt_master["CPN名"] = bt_master["CPN名"].astype("string").str.strip()
+            bt_month_labels = _get_cpn_normal_months(bt_master)
+            bt_options = []
+            incomplete_bt_months = []
+            for m in bt_month_labels[1:]:
+                m_dates = bt_master.loc[
+                    bt_master["月度"].astype(str).eq(str(m))
+                    & bt_master["CPN名"].isin(normal_labels),
+                    "日付",
+                ].dropna()
+                if m_dates.empty:
+                    continue
+                m_end = pd.Timestamp(m_dates.max()).normalize()
+                if pd.notna(tg_raw_max_date) and pd.Timestamp(tg_raw_max_date).normalize() >= m_end:
+                    bt_options.append(m)
+                else:
+                    incomplete_bt_months.append((m, m_end))
+
+            if not bt_options:
+                st.info("バックテストには、CPNマスタ上の対象最終日まで実績が揃った月度が必要です。")
+            else:
+                if incomplete_bt_months:
+                    latest_incomplete, latest_end = incomplete_bt_months[-1]
+                    raw_last_text = pd.Timestamp(tg_raw_max_date).strftime("%Y/%m/%d") if pd.notna(tg_raw_max_date) else "-"
+                    st.caption(
+                        f"未完了月度は候補から除外しています（ローデータ最終日: {raw_last_text}）。"
+                    )
+                bt_target_month = st.selectbox(
+                    "検証する月度",
+                    options=bt_options,
+                    index=len(bt_options) - 1,
+                    key="normal_backtest_target_month",
+                    help="月度はCPNマスタ基準です。対象月度のCPNマスタ登録日だけを予測・実績比較します。",
+                )
+
+                try:
+                    bt_result = _run_normal_backtest(
+                        history_df,
+                        cpn_master,
+                        bt_target_month,
+                        auto_select_learning=False,
+                    )
+                    st.caption(
+                        f"検証対象: CPNマスタ {bt_result['target_month']}（定常{bt_result['target_day_count']}日） ／ "
+                        f"予測基準日: {bt_result['cutoff_date'].strftime('%Y/%m/%d')} ／ "
+                        f"学習期間: {bt_result['learning_start'].strftime('%Y/%m/%d')}〜{bt_result['cutoff_date'].strftime('%Y/%m/%d')} "
+                        f"（最大60日・定常{bt_result['learning_calendar_day_count']}日）"
+                    )
+
+                    st.caption(
+                        f"対象月度に実際に掲載があった {bt_result.get('published_media_count', 0):,}媒体だけを自動抽出して評価しています。"
+                    )
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("予測CV", f"{bt_result.get('published_media_forecast', 0):,.0f}")
+                    m2.metric("実績CV", f"{bt_result.get('published_media_actual', 0):,.0f}")
+                    m3.metric(
+                        "差分",
+                        f"{bt_result.get('published_media_diff', 0):+,.0f}",
+                        delta=(
+                            f"{bt_result.get('published_media_error_rate'):+.1%}"
+                            if pd.notna(bt_result.get("published_media_error_rate"))
+                            else None
+                        ),
+                        delta_color="off",
+                    )
+                    m4.metric(
+                        "日次WAPE",
+                        f"{bt_result.get('published_wape'):.1%}" if pd.notna(bt_result.get("published_wape")) else "-",
+                        help="対象月度に掲載があった媒体だけの、媒体×日ごとの絶対誤差合計 ÷ 実績CV合計。小さいほど予測精度が高い指標です。",
+                    )
+
+                    bt_display = bt_result["media_compare"].copy()
+                    bt_display["予測CV"] = bt_display["予測CV"].round(0).astype(int)
+                    bt_display["実績CV"] = bt_display["実績CV"].round(0).astype(int)
+                    bt_display["差分"] = bt_display["差分"].round(0).astype(int)
+                    bt_display["誤差率"] = bt_display["誤差率"].map(
+                        lambda x: f"{x:+.1%}" if pd.notna(x) else "-"
+                    )
+                    diagnostic_cols = [
+                        "media", "学習稼働率", "稼働時日平均CV", "基礎期待CV/日", "学習対象日数", "稼働日数",
+                        "基礎CV", "曜日補正後CV", "曜日影響CV",
+                        "需要期補正後CV", "需要期影響CV",
+                        "月初月末補正後CV", "月初月末影響CV",
+                        "マジ得後補正後CV", "マジ得後影響CV",
+                        "LINE補正後CV", "LINE影響CV",
+                        "掲載判定前CV", "予測掲載継続率", "掲載継続影響CV", "対象月掲載実績",
+                        "予測CV", "実績CV", "差分", "誤差率",
+                    ]
+                    diagnostic_cols = [c for c in diagnostic_cols if c in bt_display.columns]
+                    bt_export = bt_display[diagnostic_cols].rename(columns={"media": "媒体"})
+                    numeric_diag = [c for c in bt_export.columns if c not in {"媒体", "誤差率", "対象月掲載実績"}]
+                    for c in numeric_diag:
+                        bt_export[c] = pd.to_numeric(bt_export[c], errors="coerce").round(2)
+
+                    bt_export_published = bt_export.loc[
+                        bt_export["対象月掲載実績"].astype(str).eq("掲載あり")
+                    ].copy() if "対象月掲載実績" in bt_export.columns else bt_export.copy()
+
+                    bt_month_filename = str(bt_target_month).replace("/", "-").replace(" ", "")
+                    st.download_button(
+                        "📥 バックテストCSVを保存",
+                        data=bt_export_published.to_csv(index=False).encode("utf-8-sig"),
+                        file_name=f"AFF定常予測_バックテスト_{bt_month_filename}.csv",
+                        mime="text/csv",
+                        key=f"download_backtest_media_{bt_month_filename}",
+                        type="primary",
+                    )
+
+                    sales_cols = ["媒体", "予測CV", "実績CV", "差分", "誤差率"]
+                    sales_cols = [c for c in sales_cols if c in bt_export_published.columns]
+                    st.dataframe(
+                        bt_export_published[sales_cols],
+                        width="stretch",
+                        hide_index=True,
+                    )
+
+                    with st.expander("全媒体・掲載判定の詳細（分析用）"):
+                        b1, b2, b3 = st.columns(3)
+                        b1.metric("全媒体の最終予測", f"{bt_result.get('total_forecast', 0):,.0f}")
+                        b2.metric("掲載媒体の予測", f"{bt_result.get('published_media_forecast', 0):,.0f}")
+                        b3.metric(
+                            "掲載なし媒体への予測",
+                            f"{bt_result.get('unpublished_media_forecast', 0):,.0f}",
+                            help="対象月度のローデータに登場しなかった媒体へ残っていた予測です。",
+                        )
+                        st.dataframe(
+                            bt_export,
+                            width="stretch",
+                            hide_index=True,
+                        )
+                        st.download_button(
+                            "📥 全媒体の診断CSVを保存",
+                            data=bt_export.to_csv(index=False).encode("utf-8-sig"),
+                            file_name=f"AFF定常予測_バックテスト診断_全媒体_{bt_month_filename}.csv",
+                            mime="text/csv",
+                            key=f"download_backtest_all_media_{bt_month_filename}",
+                        )
+
+                    with st.expander("学習データ診断（分析用）"):
+                        audit = bt_result.get("learning_audit", pd.DataFrame()).copy()
+                        summary = bt_result.get("learning_summary", {})
+                        if summary:
+                            first_day = summary.get("最初の日")
+                            last_day = summary.get("最後の日")
+                            first_text = pd.Timestamp(first_day).strftime("%Y/%m/%d") if pd.notna(first_day) else "-"
+                            last_text = pd.Timestamp(last_day).strftime("%Y/%m/%d") if pd.notna(last_day) else "-"
+                            a1, a2, a3, a4 = st.columns(4)
+                            a1.metric("学習実績日数", f"{summary.get('実績存在日数', 0):,}日")
+                            a2.metric("学習CV合計", f"{summary.get('CV合計', 0):,.0f}")
+                            a3.metric("学習媒体数", f"{summary.get('媒体数', 0):,}")
+                            a4.metric("元データ行数", f"{summary.get('元データ行数', 0):,}")
+                            st.caption(
+                                f"実際に学習対象として抽出した期間: {first_text}〜{last_text} ／ "
+                                f"異常値・マジ得直後の除外媒体日: {summary.get('除外媒体日数', 0):,} ／ "
+                                f"休眠除外媒体: {summary.get('休眠除外媒体数', 0):,}"
+                            )
+                        if not audit.empty:
+                            for c in ["CPN最初の日", "CPN最後の日"]:
+                                audit[c] = pd.to_datetime(audit[c], errors="coerce").dt.strftime("%Y/%m/%d").fillna("-")
+                            audit["CV合計"] = pd.to_numeric(audit["CV合計"], errors="coerce").fillna(0).round(0).astype(int)
+                            st.dataframe(audit, width="stretch", hide_index=True)
+
+                    with st.expander("予測ロジック詳細（分析用）"):
+                        st.dataframe(
+                            bt_export,
+                            width="stretch",
+                            hide_index=True,
+                        )
+
+                    inactive_bt = bt_result.get("inactive_media", pd.DataFrame())
+                    if not inactive_bt.empty:
+                        st.caption(f"休眠判定で定常予測から除外: {len(inactive_bt):,}媒体")
+
+                    with st.expander("バックテスト日別明細"):
+                        bt_daily = bt_result["daily_compare"].copy()
+                        bt_daily["date"] = pd.to_datetime(bt_daily["date"]).dt.strftime("%Y/%m/%d")
+                        bt_daily = bt_daily.rename(
+                            columns={
+                                "date": "日付",
+                                "media": "媒体",
+                                "forecast_cv": "予測CV",
+                                "actual_cv": "実績CV",
+                            }
+                        )
+                        st.dataframe(
+                            bt_daily[["日付", "媒体", "予測CV", "実績CV", "差分"]].round(2),
+                            width="stretch",
+                            hide_index=True,
+                        )
+                        bt_daily_export = bt_daily[["日付", "媒体", "予測CV", "実績CV", "差分"]].round(2)
+                        st.download_button(
+                            "📥 日別明細をCSVで保存",
+                            data=bt_daily_export.to_csv(index=False).encode("utf-8-sig"),
+                            file_name=f"AFF定常予測_バックテスト日別_{bt_month_filename}.csv",
+                            mime="text/csv",
+                            key=f"download_backtest_daily_{bt_month_filename}",
+                        )
+                except Exception as bt_exc:
+                    st.warning(f"バックテストを実行できませんでした: {bt_exc}")
+
+        reference_key = tuple(
+            (
+                seg["label"],
+                seg["cpn"],
+                str(seg["start"]),
+                str(seg["end"]),
+                seg["reference_key"],
+            )
+            for seg in segment_bases
+        )
+
+        calc_key = (
+            tuple(selected_media),
+            tuple(selected_product_ids),
+            bool(exclude_compensation),
+            reference_key,
+            opt_mode,
+            len(base_pair),
+            round(float(pd.to_numeric(base_pair["base_cv"], errors="coerce").fillna(0).sum()), 6),
+            round(float(pd.to_numeric(base_pair["cost"], errors="coerce").fillna(0).sum()), 2),
+            tuple((m, publication_status_map.get(m, "掲載予定"), round(float(publication_factor_map.get(m, 1.0)), 6)) for m in selected_media),
+        )
+
+        cached_calc = st.session_state.get("_planning_calc")
+
+        if (
+            cached_calc is not None
+            and st.session_state.get("_planning_calc_key") == calc_key
+        ):
+            forecast_df = cached_calc["forecast_df"]
+            sim_df = cached_calc["sim_df"]
+            sim_summary = cached_calc["sim_summary"]
+            opt_df = cached_calc["opt_df"]
+            opt_summary = cached_calc["opt_summary"]
+
+            sim_report_table = cached_calc.get("sim_report_table")
+            opt_report_table = cached_calc.get("opt_report_table")
+
+            if sim_report_table is None:
+                sim_report_table = create_report_table(sim_summary)
+                cached_calc["sim_report_table"] = sim_report_table
+
+            if opt_report_table is None:
+                opt_report_table = create_report_table(opt_summary)
+                cached_calc["opt_report_table"] = opt_report_table
+
+        else:
+            future_parts = []
+            for seg in segment_bases:
+                future_dates = pd.date_range(start=seg["start"], end=seg["end"])
+                part = pd.DataFrame({"date": future_dates}).merge(
+                    seg["base_pair"],
+                    how="cross",
+                )
+                part["weekday"] = part["date"].dt.day_name()
+                part = add_business_edge_flags(part)
+
+                # CPNマスタからは月度・特殊日フラグだけ取得。
+                # 施策名そのものはUI選択を正とする。
+                part = part.merge(
+                    cpn_master[
+                        [
+                            "日付",
+                            "月度",
+                            "line_oa_flag",
+                            "magitoku_after_flag",
+                        ]
+                    ],
+                    left_on="date",
+                    right_on="日付",
+                    how="left",
+                )
+                part["CPN名"] = seg["cpn"]
+                part["planning_segment"] = seg["label"]
+                part["月度"] = (
+                    part["月度"]
+                    .astype("string")
+                    .str.strip()
+                    .replace("", pd.NA)
+                    .fillna(pd.Series(part["date"].dt.strftime("%Y年%m月度"), index=part.index))
+                )
+                part["line_oa_flag"] = part["line_oa_flag"].fillna(0).astype(int)
+                part["magitoku_after_flag"] = part["magitoku_after_flag"].fillna(0).astype(int)
+                part["cpn_factor"] = 1.0
+                future_parts.append(part)
+
+            future_df = pd.concat(future_parts, ignore_index=True)
+            forecast_df = forecast_cv(future_df, factor_tables)
+
+            forecast_df = enforce_premium_media_cost(
+                forecast_df
+            )
+
+            forecast_df["掲載状態"] = forecast_df["media"].map(publication_status_map).fillna("掲載予定")
+            forecast_df["掲載係数"] = forecast_df["media"].map(publication_factor_map).fillna(1.0)
+            normal_pub_mask = forecast_df["CPN名"].astype(str).str.strip().isin(normal_labels)
+            forecast_df["forecast_cv_before_publication"] = forecast_df["forecast_cv"]
+            forecast_df.loc[normal_pub_mask, "forecast_cv"] = (
+                pd.to_numeric(forecast_df.loc[normal_pub_mask, "forecast_cv"], errors="coerce").fillna(0.0)
+                * pd.to_numeric(forecast_df.loc[normal_pub_mask, "掲載係数"], errors="coerce").fillna(1.0)
+            )
+            forecast_df.loc[normal_pub_mask, "cost"] = (
+                pd.to_numeric(forecast_df.loc[normal_pub_mask, "cost"], errors="coerce").fillna(0.0)
+                * pd.to_numeric(forecast_df.loc[normal_pub_mask, "掲載係数"], errors="coerce").fillna(1.0)
+            )
+
+            _plan_period_metrics = _calculate_period_media_metrics(history_df)
+            is_magi_plan = forecast_df["CPN名"].astype(str).str.strip().eq("マジ得")
+            normal_rate_map = _plan_period_metrics["normal_rate"]
+            magi_rate_map = _plan_period_metrics["magi_rate"]
+            normal_unit_map = _plan_period_metrics["normal_unit"]
+            magi_unit_map = _plan_period_metrics["magi_unit"]
+            forecast_df["approval_rate"] = [
+                (magi_rate_map.get(str(m), _plan_period_metrics["magi_rate_all"]) if magi
+                 else normal_rate_map.get(str(m), _plan_period_metrics["normal_rate_all"]))
+                for m, magi in zip(forecast_df["media"], is_magi_plan)
+            ]
+            forecast_df["gross_unit"] = [
+                (magi_unit_map.get(str(m), _plan_period_metrics["magi_unit_all"]) if magi
+                 else normal_unit_map.get(str(m), _plan_period_metrics["normal_unit_all"]))
+                for m, magi in zip(forecast_df["media"], is_magi_plan)
+            ]
+            forecast_df["approval_rate"] = pd.to_numeric(forecast_df["approval_rate"], errors="coerce").fillna(0.0).clip(0, 1)
+            forecast_df["gross_unit"] = pd.to_numeric(forecast_df["gross_unit"], errors="coerce").fillna(0.0)
+
+            forecast_df = forecast_df.copy()
+            forecast_df["date"] = format_date(
+                forecast_df
+            )
+
+            sim_df = simulate_plan(
+                forecast_df
+            )
+
+            sim_df = sim_df.copy()
+            if "approved_cv" not in sim_df.columns:
+                cv_s = pd.to_numeric(sim_df.get("cv", pd.Series(0.0, index=sim_df.index)), errors="coerce").fillna(0.0)
+                rate_s = pd.to_numeric(sim_df.get("approval_rate", pd.Series(0.0, index=sim_df.index)), errors="coerce").fillna(0.0).clip(0, 1)
+                sim_df["approved_cv"] = cv_s * rate_s
+            if "cpa" not in sim_df.columns and "gross_unit" in sim_df.columns:
+                sim_df["cpa"] = pd.to_numeric(sim_df["gross_unit"], errors="coerce").fillna(0.0)
+            if "cost" not in sim_df.columns:
+                unit_s = pd.to_numeric(sim_df.get("cpa", pd.Series(0.0, index=sim_df.index)), errors="coerce").fillna(0.0)
+                sim_df["cost"] = pd.to_numeric(sim_df["approved_cv"], errors="coerce").fillna(0.0) * unit_s
+
+            sim_group_cols = ["date", "media", "plan"]
+            if "CPN名" in sim_df.columns:
+                sim_group_cols.append("CPN名")
+            sim_df = sim_df.copy()
+            for _col in ["date", "media", "plan", "cv", "cost", "approved_cv", "cpa"]:
+                if _col not in sim_df.columns:
+                    sim_df[_col] = pd.Series(dtype="object" if _col in {"date", "media", "plan"} else "float64")
+            sim_df["_unit_weight"] = pd.to_numeric(sim_df["cpa"], errors="coerce").fillna(0) * pd.to_numeric(sim_df["cv"], errors="coerce").fillna(0)
+            sim_summary = (
+                sim_df.groupby(
+                    sim_group_cols,
+                    as_index=False,
+                )
+                .agg(
+                    cv=("cv", "sum"),
+                    cost=("cost", "sum"),
+                    approved_cv=("approved_cv", "sum"),
+                    _unit_weight=("_unit_weight", "sum"),
+                )
+            )
+            sim_summary["cpa"] = (
+                sim_summary["_unit_weight"]
+                / sim_summary["cv"].replace(0, pd.NA)
+            ).fillna(0)
+            sim_summary = sim_summary.drop(columns=["_unit_weight"])
+
+            sim_summary["date"] = format_date(
+                sim_summary
+            )
+
+            opt_df = optimize_budget(
+                sim_df,
+                opt_mode,
+            )
+
+            opt_group_cols = ["date", "media", "plan"]
+            if "CPN名" in opt_df.columns:
+                opt_group_cols.append("CPN名")
+            opt_df = opt_df.copy()
+            for _col in ["date", "media", "plan", "cv", "cost", "approved_cv", "cpa"]:
+                if _col not in opt_df.columns:
+                    opt_df[_col] = pd.Series(dtype="object" if _col in {"date", "media", "plan"} else "float64")
+            opt_df["_unit_weight"] = pd.to_numeric(opt_df["cpa"], errors="coerce").fillna(0) * pd.to_numeric(opt_df["cv"], errors="coerce").fillna(0)
+            opt_summary = (
+                opt_df.groupby(
+                    opt_group_cols,
+                    as_index=False,
+                )
+                .agg(
+                    cv=("cv", "sum"),
+                    cost=("cost", "sum"),
+                    approved_cv=("approved_cv", "sum"),
+                    _unit_weight=("_unit_weight", "sum"),
+                )
+            )
+            opt_summary["cpa"] = (
+                opt_summary["_unit_weight"]
+                / opt_summary["cv"].replace(0, pd.NA)
+            ).fillna(0)
+            opt_summary = opt_summary.drop(columns=["_unit_weight"])
+
+            opt_summary["date"] = format_date(
+                opt_summary
+            )
+
+            st.session_state["_planning_calc_key"] = calc_key
+            sim_report_table = create_report_table(sim_summary)
+            opt_report_table = create_report_table(opt_summary)
+
+            st.session_state["_planning_calc"] = {
+                "forecast_df": forecast_df,
+                "sim_df": sim_df,
+                "sim_summary": sim_summary,
+                "opt_df": opt_df,
+                "opt_summary": opt_summary,
+                "sim_report_table": sim_report_table,
+                "opt_report_table": opt_report_table,
+            }
+
+            st.session_state.pop("submission_excel", None)
+
+        if needs_normal_learning and not forecast_df.empty:
+            normal_pub_summary_mask = forecast_df["CPN名"].astype(str).str.strip().isin(normal_labels)
+            normal_pub_rows = forecast_df.loc[normal_pub_summary_mask].copy()
+            if not normal_pub_rows.empty:
+                normal_pub_rows["forecast_cv_before_publication"] = pd.to_numeric(
+                    normal_pub_rows.get("forecast_cv_before_publication", normal_pub_rows["forecast_cv"]),
+                    errors="coerce",
+                ).fillna(0.0)
+                normal_pub_rows["forecast_cv"] = pd.to_numeric(normal_pub_rows["forecast_cv"], errors="coerce").fillna(0.0)
+                pub_total_before = float(normal_pub_rows["forecast_cv_before_publication"].sum())
+                pub_total_after = float(normal_pub_rows["forecast_cv"].sum())
+                pub_impact = pub_total_after - pub_total_before
+
+                st.subheader("📌 掲載状態反映後の定常予測")
+                sm1, sm2, sm3 = st.columns(3)
+                sm1.metric("掲載判定前CV", f"{pub_total_before:,.0f}")
+                sm2.metric("掲載状態反映後CV", f"{pub_total_after:,.0f}")
+                sm3.metric("掲載状態による増減", f"{pub_impact:+,.0f}")
+
+                pub_media = (
+                    normal_pub_rows.groupby("media", as_index=False)
+                    .agg(
+                        掲載判定前CV=("forecast_cv_before_publication", "sum"),
+                        予測CV=("forecast_cv", "sum"),
+                    )
+                )
+                pub_media["掲載状態"] = pub_media["media"].map(publication_status_map).fillna("掲載予定")
+                pub_media = pub_media.rename(columns={"media": "媒体"})
+                pub_media["予測CV"] = pub_media["予測CV"].round(0).astype(int)
+                pub_media["掲載判定前CV"] = pub_media["掲載判定前CV"].round(0).astype(int)
+                pub_media = pub_media.sort_values(["予測CV", "掲載判定前CV"], ascending=False)
+                st.dataframe(
+                    pub_media[["媒体", "掲載状態", "予測CV"]],
+                    width="stretch",
+                    hide_index=True,
+                )
+                with st.expander("掲載状態による補正詳細（分析用）"):
+                    detail = pub_media.copy()
+                    detail["増減CV"] = detail["予測CV"] - detail["掲載判定前CV"]
+                    st.dataframe(
+                        detail[["媒体", "掲載状態", "掲載判定前CV", "予測CV", "増減CV"]],
+                        width="stretch",
+                        hide_index=True,
+                    )
+
+        with st.expander("予測係数の確認"):
+            factor_cols = [
+                "date",
+                "media",
+                "商品ID",
+                "base_cv",
+                "cpn_factor",
+                "unit_price_factor",
+                "unit_price_reference",
+                "unit_price_latest",
+                "unit_price_elasticity",
+                "weekday_factor",
+                "season_factor",
+                "month_edge_factor",
+                "after_factor",
+                "line_factor",
+                "forecast_cv",
+                "cost",
+            ]
+
+            available_factor_cols = [
+                c for c in factor_cols
+                if c in forecast_df.columns
+            ]
+
+            st.dataframe(
+                forecast_df[available_factor_cols],
+                width="stretch",
+                hide_index=True,
+            )
+
+        st.subheader("📊 松竹梅")
+        st.dataframe(
+            sim_report_table,
+            width="stretch",
+        )
+
+        st.subheader("🚀 最適プラン")
+        st.dataframe(
+            opt_report_table,
+            width="stretch",
+        )
+
+        st.subheader("✍️ 手動設定")
+        st.caption(
+            "初期件数は掲載状態反映後のForecast、単価・承認率は最適プランと過去実績から自動設定。"
+            "グロス単価・承認率・採用件数を編集すると、費用は自動計算されます。"
+            "承認件数と発行CPAは入力内容から自動計算します。"
+        )
+
+        render_manual_settings(
+            opt_summary=opt_summary,
+            history_df=history_df,
+            selected_cpn=selected_cpn,
+            calc_key=calc_key,
+            forecast_df=forecast_df,
+        )
+
+        current_manual_for_chart = _normalize_manual_settings(
+            st.session_state.get(
+                "_manual_settings",
+                _build_manual_settings_defaults(
+                    opt_summary=opt_summary,
+                    history_df=history_df,
+                    selected_cpn=selected_cpn,
+                    forecast_df=forecast_df,
+                ),
+            )
+        )
+
+        current_manual_magitoku_for_chart = pd.DataFrame()
+        if (
+            not current_manual_for_chart.empty
+            and "CPN名" in opt_summary.columns
+            and (opt_summary["CPN名"].astype(str).str.strip() == "マジ得").any()
+        ):
+            mix = opt_summary.copy()
+            mix["media"] = mix["media"].astype(str)
+            mix["cv"] = pd.to_numeric(mix["cv"], errors="coerce").fillna(0.0)
+            mix["CPN名"] = mix["CPN名"].astype(str).str.strip()
+            total_cv = mix.groupby("media")["cv"].sum()
+            magi_cv = mix.loc[mix["CPN名"].eq("マジ得")].groupby("media")["cv"].sum()
+            magi_ratio = (magi_cv / total_cv.replace(0, pd.NA)).fillna(0.0).clip(0, 1)
+
+            current_manual_magitoku_for_chart = current_manual_for_chart.copy()
+            current_manual_magitoku_for_chart["_magi_ratio"] = (
+                current_manual_magitoku_for_chart["媒体名"].astype(str).map(magi_ratio).fillna(0.0)
+            )
+            current_manual_magitoku_for_chart["今回採用件数"] = (
+                pd.to_numeric(
+                    current_manual_magitoku_for_chart["今回採用件数"], errors="coerce"
+                ).fillna(0.0)
+                * current_manual_magitoku_for_chart["_magi_ratio"]
+            )
+            current_manual_magitoku_for_chart = current_manual_magitoku_for_chart.drop(
+                columns=["_magi_ratio"]
+            )
+            current_manual_magitoku_for_chart = _normalize_manual_settings(
+                current_manual_magitoku_for_chart
+            )
+            current_manual_magitoku_for_chart = current_manual_magitoku_for_chart.loc[
+                current_manual_magitoku_for_chart["今回採用件数"] > 0
+            ].copy()
+
+        try:
+            with tab_history, history_analytics_placeholder.container():
+                render_history_analytics(
+                    history_df,
+                    current_plan_df=current_manual_for_chart,
+                    current_plan_magitoku_df=current_manual_magitoku_for_chart,
+                )
+        except ValueError as analytics_exc:
+            with tab_history, history_analytics_placeholder.container():
+                st.warning(f"月度別実績を集計できません。{analytics_exc}")
+
+        submission_month_label, submission_year, submission_month = _resolve_submission_cpn_month(
+            cpn_master, start_date, end_date
+        )
+        submission_filename = (
+            f"【提出用】楽天カード"
+            f"{submission_year}年{submission_month}月度"
+            f"プランニング.xlsx"
+        )
+
+        manual_settings_for_export = _normalize_manual_settings(
+            st.session_state.get(
+                "_manual_settings",
+                _build_manual_settings_defaults(
+                    opt_summary=opt_summary,
+                    history_df=history_df,
+                    selected_cpn=selected_cpn,
+                    forecast_df=forecast_df,
+                ),
+            )
+        )
+
+        render_submission_download(
+            opt_summary=opt_summary,
+            history_df=history_df,
+            cpn_master=cpn_master,
+            manual_settings=manual_settings_for_export,
+            start_date=start_date,
+            end_date=end_date,
+            selected_cpn=selected_cpn,
+            opt_mode=opt_mode,
+            submission_filename=submission_filename,
+        )
