@@ -2893,6 +2893,9 @@ if uploaded_master and has_any_actual:
         history_df["media"].isin(selected_media)
     ].copy()
 
+    from competitor_cv_analysis import show_competitor_cv_analysis
+    show_competitor_cv_analysis(history_df)
+
     history_analytics_placeholder = st.empty()
     try:
         _period_preview = _calculate_period_media_metrics(history_df)
