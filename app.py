@@ -1734,7 +1734,7 @@ def render_history_analytics(
         ax_count.grid(axis="y", alpha=0.25)
         fig_count.tight_layout()
         count_png = _figure_png_bytes(fig_count)
-        st.image(count_png, use_container_width=True)
+        st.image(BytesIO(count_png), use_container_width=True)
         _render_png_actions(
             count_png,
             f"月度別_発行数_{scope_suffix}.png",
@@ -1755,7 +1755,7 @@ def render_history_analytics(
         ax_cpa.grid(axis="y", alpha=0.25)
         fig_cpa.tight_layout()
         cpa_png = _figure_png_bytes(fig_cpa)
-        st.image(cpa_png, use_container_width=True)
+        st.image(BytesIO(cpa_png), use_container_width=True)
         _render_png_actions(
             cpa_png,
             f"月度別_発行CPA_{scope_suffix}.png",
@@ -2692,6 +2692,20 @@ def render_af_monthly_history(af_history_df):
     monthly["発行率"] = monthly["発行率"].map(lambda v: "—" if pd.isna(v) else f"{v:.1%}")
     st.dataframe(monthly, use_container_width=True, hide_index=True)
 
+# メイン機能のタブだけを強調（内側の分析タブには適用しない）
+st.markdown("""<style>
+/* メインタブは画面内で最初のタブリスト */
+div[data-testid="stTabs"]:has(> div[data-baseweb="tab-list"]) > div[data-baseweb="tab-list"] > button[data-baseweb="tab"] {
+    font-size: 1.25rem !important;
+    font-weight: 750 !important;
+    padding: 0.9rem 1.6rem !important;
+    min-height: 3.7rem !important;
+}
+div[data-testid="stTabs"]:has(> div[data-baseweb="tab-list"]) > div[data-baseweb="tab-list"] > button[data-baseweb="tab"] p {
+    font-size: 1.25rem !important;
+    font-weight: 750 !important;
+}
+</style>""", unsafe_allow_html=True)
 tab_history, tab_planning, tab_competitor = st.tabs(["📊 過去実績分析", "🧮 プランニング", "📈 競合分析"])
 with tab_history:
     st.caption("アップロード済みの実績データを共通利用します。TG計測とAF計測は別集計です。")
@@ -2813,8 +2827,9 @@ with tab_planning:
                 st.info("実績ファイルをアップロードすると分析を表示します。")
 
         if uploaded_file is None:
-            st.subheader("📊 計測結果")
-            _render_measurement_tabs(tg_df=None, af_df=af_history_df, af_code_df=af_code_history_df, key_prefix="af_only")
+            with tab_history:
+                st.subheader("📊 計測結果")
+                _render_measurement_tabs(tg_df=None, af_df=af_history_df, af_code_df=af_code_history_df, key_prefix="af_only")
             st.info("AF計測実績のみを読み込みました。TG実績がないため、従来の媒体別予測・最適化・提出用Excel生成は表示していません。")
             st.stop()
 
@@ -2873,13 +2888,14 @@ with tab_planning:
             .fillna("未分類")
         )
 
-        st.subheader("📊 計測結果")
-        _render_measurement_tabs(
-            tg_df=history_df,
-            af_df=af_history_df if has_af_data else None,
-            af_code_df=af_code_history_df if has_af_data else None,
-            key_prefix="measurement_compare",
-        )
+        with tab_history:
+            st.subheader("📊 計測結果")
+            _render_measurement_tabs(
+                tg_df=history_df,
+                af_df=af_history_df if has_af_data else None,
+                af_code_df=af_code_history_df if has_af_data else None,
+                key_prefix="measurement_compare",
+            )
 
         st.sidebar.header("商品ID選択")
         all_product_ids = sorted(
