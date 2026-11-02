@@ -46,6 +46,9 @@ def show_competitor_cv_analysis(history):
         st.error(f'競合データの読み込みに失敗しました: {exc}')
         return
     if comp.empty: return
+    comp = comp.copy()
+    comp['商品'] = comp['商品'].replace({'Yahoo! JAPANカード': 'Paypayカード', 'PayPayカード': 'Paypayカード'})
+    comp = comp.sort_values('調査日').drop_duplicates(['調査日','媒体','セグメント','商品'], keep='last')
     products = sorted(comp['商品'].dropna().unique())
     own_product = '楽天カード'
     if own_product not in products:
@@ -53,9 +56,17 @@ def show_competitor_cv_analysis(history):
         return
     rivals = [x for x in products if x != own_product]
     if not rivals: return
-    a,b,c = st.columns(3)
+    defaults = ['三井住友カード（NL）', '三井住友カード ゴールド（NL）', 'エポスカード', 'Paypayカード']
+    # 調査ファイルの旧商品名を、表示・選択時に統一する。
+    # 旧「三井住友カード」はNLと同一と断定できないため、自動統合しない。
+    a,b,c = st.columns([2,1,1])
     with a:
-        rival = st.selectbox('比較する競合商品', rivals, key='product_rival')
+        selected = st.multiselect('比較する競合商品（複数選択可）', rivals,
+                                  default=[x for x in defaults if x in rivals],
+                                  key='product_rivals_multi')
+        if not selected:
+            st.info('比較する競合商品を1つ以上選択してください。')
+            return
     with b:
         segments = sorted(set(comp['セグメント'].dropna()))
         segment = st.selectbox('セグメント', segments, index=segments.index('1軍') if '1軍' in segments else 0, key='product_segment')
@@ -65,9 +76,9 @@ def show_competitor_cv_analysis(history):
     if metric not in history.columns:
         st.warning(f'実績データに {metric} がありません。')
         return
-    eligible = sorted(set(comp.loc[(comp['商品']==own_product)&(comp['セグメント']==segment),'媒体']) & set(comp.loc[(comp['商品']==rival)&(comp['セグメント']==segment),'媒体']))
+    eligible = sorted(set(comp.loc[(comp['商品']==own_product)&(comp['セグメント']==segment),'媒体']) & set(comp.loc[(comp['商品'].isin(selected))&(comp['セグメント']==segment),'媒体']))
     if not eligible:
-        st.info('両商品の還元額が存在する媒体がありません。')
+        st.info('楽天カードと選択した競合商品の還元額が存在する媒体がありません。')
         return
     media = st.selectbox('還元額を比較するポイントサイト',eligible,key='product_reward_media')
     st.caption('CV実績は媒体名で絞り込まず、アップロードされた対象実績を全媒体合算します。')
@@ -79,25 +90,62 @@ def show_competitor_cv_analysis(history):
         st.info('開始日と終了日を選択してください。')
         return
     start, end = date_range
-    joined = _join(history,comp,media,segment,own_product,rival,metric,pd.Timestamp(start),pd.Timestamp(end))
-    if joined.empty:
+    series = {}
+    for rival in selected:
+        joined = _join(history, comp, media, segment, own_product, rival, metric,
+                       pd.Timestamp(start), pd.Timestamp(end))
+        if not joined.empty:
+            series[rival] = joined
+    if not series:
         st.info('条件に合う日付がありません。実績と調査日の重なりや媒体対応を確認してください。')
         return
-    st.caption(f'比較可能日数：{len(joined):,}日／競合−楽天カードの還元額差を使用。還元額は各商品の直近調査値を次の調査日まで引き継ぎます（分析期間開始前の調査値も利用）。')
-    st.markdown('#### ① 楽天カードCVと両商品の還元額推移')
+    missing = [p for p in selected if p not in series]
+    if missing:
+        st.warning('このポイントサイトで比較可能なデータがない商品: ' + '、'.join(missing))
+    st.caption('還元額は各商品の直近調査値を次の調査日まで引き継ぎます（分析期間開始前の調査値も利用）。比較可能日数は商品ごとに異なる場合があります。')
+    st.markdown('#### ① 楽天カードCVと選択商品の還元額推移')
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=joined['date'],y=joined['CV'],name=f'楽天カード全媒体合計{metric_label}'))
-    for label in ['自社還元額','競合還元額']:
-        fig.add_trace(go.Scatter(x=joined['date'],y=joined[label],name=label,mode='lines',line_shape='hv',yaxis='y2'))
-    fig.update_layout(height=400,hovermode='x unified',yaxis=dict(title='CV（件）',showgrid=False),yaxis2=dict(title='還元額（円）',overlaying='y',side='right',showgrid=False),legend=dict(orientation='h',y=1.15))
-    st.plotly_chart(fig,use_container_width=True)
+    cv_daily = history.copy()
+    cv_daily['date'] = pd.to_datetime(cv_daily['date'], errors='coerce').dt.normalize()
+    cv_daily = cv_daily.loc[cv_daily['date'].between(pd.Timestamp(start), pd.Timestamp(end))]
+    cv_daily[metric] = pd.to_numeric(cv_daily[metric], errors='coerce').fillna(0)
+    cv_daily = cv_daily.groupby('date', as_index=False)[metric].sum()
+    fig.add_trace(go.Bar(x=cv_daily['date'], y=cv_daily[metric],
+                         name=f'楽天カード全媒体合計{metric_label}', opacity=0.45))
+    base = next(iter(series.values()))
+    fig.add_trace(go.Scatter(x=base['date'], y=base['自社還元額'],
+                             name='楽天カード還元額', mode='lines', line_shape='hv', yaxis='y2'))
+    for product, df in series.items():
+        fig.add_trace(go.Scatter(x=df['date'], y=df['競合還元額'],
+                                 name=product, mode='lines', line_shape='hv', yaxis='y2'))
+    fig.update_layout(height=430, hovermode='x unified',
+                      yaxis=dict(title='CV（件）', showgrid=False),
+                      yaxis2=dict(title='還元額（円）', overlaying='y', side='right', showgrid=False),
+                      legend=dict(orientation='h', y=1.22))
+    st.plotly_chart(fig, use_container_width=True)
+
     st.markdown('#### ② 競合−楽天カードの還元額差 × 楽天カードCV')
-    fig2 = go.Figure(go.Scatter(x=joined['還元額差（競合−自社）'],y=joined['CV'],mode='markers',customdata=joined['date'].dt.strftime('%Y/%m/%d'),hovertemplate='差額 %{x:,.0f}円 / CV %{y:,.0f}件<br>%{customdata}<extra></extra>'))
-    fig2.update_layout(height=360,xaxis_title='競合−楽天カード還元額（円）',yaxis_title=f'楽天カード全媒体合計{metric_label}（件）')
-    st.plotly_chart(fig2,use_container_width=True)
+    fig2 = go.Figure()
+    for product, df in series.items():
+        fig2.add_trace(go.Scatter(
+            x=df['還元額差（競合−自社）'], y=df['CV'], mode='markers', name=product,
+            customdata=df['date'].dt.strftime('%Y/%m/%d'),
+            hovertemplate='%{fullData.name}<br>差額 %{x:,.0f}円 / CV %{y:,.0f}件<br>%{customdata}<extra></extra>'))
+    fig2.update_layout(height=420, xaxis_title='競合−楽天カード還元額（円）',
+                       yaxis_title=f'楽天カード全媒体合計{metric_label}（件）',
+                       legend=dict(orientation='h', y=1.15))
+    st.plotly_chart(fig2, use_container_width=True)
+
     st.markdown('#### ③ 還元額差帯別の楽天カード平均CV')
-    joined['差額帯下限'] = (joined['還元額差（競合−自社）']//1000*1000).astype(int)
-    summary = joined.groupby('差額帯下限',as_index=False).agg(平均CV=('CV','mean'),日数=('date','count')).sort_values('差額帯下限')
-    summary['差額帯'] = summary['差額帯下限'].map(lambda v:f'{v:+,}〜{v+999:+,}円')
-    st.dataframe(summary[['差額帯','平均CV','日数']],hide_index=True,use_container_width=True)
+    summaries = []
+    for product, df in series.items():
+        data = df.copy()
+        data['差額帯下限'] = (data['還元額差（競合−自社）']//1000*1000).astype(int)
+        summary = data.groupby('差額帯下限', as_index=False).agg(
+            平均CV=('CV', 'mean'), 日数=('date', 'count')).sort_values('差額帯下限')
+        summary['競合商品'] = product
+        summary['差額帯'] = summary['差額帯下限'].map(lambda v: f'{v:+,}〜{v+999:+,}円')
+        summaries.append(summary[['競合商品', '差額帯', '平均CV', '日数']])
+    st.dataframe(pd.concat(summaries, ignore_index=True), hide_index=True,
+                 use_container_width=True)
     st.caption('選択したポイントサイトの還元額と全媒体合計CVの比較であり、媒体ごとのCVとの直接対応ではありません。これは探索的な比較です。曜日・広告露出・楽天カード自体の施策・季節性などの影響を除外していないため、CV減少の因果関係は断定できません。実績が楽天カード以外を含む場合は商品IDでの絞り込みが必要です。')
