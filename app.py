@@ -2669,9 +2669,32 @@ with col2:
         help="A列=日付（YYYYMMDD）、B列以降の1行目=AFコード、各セル=件数のAF発行実績。",
     )
 
+def render_af_monthly_history(af_history_df):
+    """アップロード済みAF計測実績を月度別に表示する（TG実績とは別集計）。"""
+    st.subheader("📊 AF計測 月度別過去実績")
+    if af_history_df is None or af_history_df.empty:
+        st.info("AF計測の申込・発行実績がありません。")
+        return
+    df = af_history_df.copy()
+    df = df.loc[df["月度"].notna() & df["月度"].astype(str).ne("未設定")].copy()
+    if df.empty:
+        st.warning("CPNマスタの月度に紐づくAF計測実績がありません。")
+        return
+    scope = st.radio("集計対象", ["全期間", "マジ得期間のみ"], horizontal=True, key="af_history_scope")
+    if scope == "マジ得期間のみ":
+        df = df.loc[df["CPN名"].astype(str).str.strip().eq("マジ得")]
+    if df.empty:
+        st.info("該当期間のAF計測実績はありません。")
+        return
+    monthly = df.groupby("月度", as_index=False)[["AF申込", "AF発行"]].sum().sort_values("月度")
+    monthly["発行率"] = monthly["AF発行"].div(monthly["AF申込"].replace(0, float("nan")))
+    st.bar_chart(monthly.set_index("月度")[["AF申込", "AF発行"]])
+    monthly["発行率"] = monthly["発行率"].map(lambda v: "—" if pd.isna(v) else f"{v:.1%}")
+    st.dataframe(monthly, use_container_width=True, hide_index=True)
+
 tab_history, tab_planning, tab_competitor = st.tabs(["📊 過去実績分析", "🧮 プランニング", "📈 競合分析"])
 with tab_history:
-    st.info("実績ファイルをアップロードすると月度別分析を表示します。")
+    st.caption("アップロード済みの実績データを共通利用します。TG計測とAF計測は別集計です。")
 with tab_competitor:
     st.subheader("競合分析ダッシュボード")
     from competitor_analysis import show_competitor_analysis
@@ -2782,6 +2805,12 @@ with tab_planning:
         except Exception as exc:
             st.error(f"ファイルの読み込みに失敗しました: {exc}")
             st.stop()
+
+        with tab_history:
+            if has_af_data:
+                render_af_monthly_history(af_history_df)
+            elif uploaded_file is None:
+                st.info("実績ファイルをアップロードすると分析を表示します。")
 
         if uploaded_file is None:
             st.subheader("📊 計測結果")
