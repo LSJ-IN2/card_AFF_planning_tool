@@ -1734,7 +1734,7 @@ def render_history_analytics(
         ax_count.grid(axis="y", alpha=0.25)
         fig_count.tight_layout()
         count_png = _figure_png_bytes(fig_count)
-        st.image(BytesIO(count_png), use_container_width=True)
+        st.markdown(f'<img src="data:image/png;base64,{base64.b64encode(count_png).decode("ascii")}" style="width:100%;height:auto" alt="月度別発行数">', unsafe_allow_html=True)
         _render_png_actions(
             count_png,
             f"月度別_発行数_{scope_suffix}.png",
@@ -1755,7 +1755,7 @@ def render_history_analytics(
         ax_cpa.grid(axis="y", alpha=0.25)
         fig_cpa.tight_layout()
         cpa_png = _figure_png_bytes(fig_cpa)
-        st.image(BytesIO(cpa_png), use_container_width=True)
+        st.markdown(f'<img src="data:image/png;base64,{base64.b64encode(cpa_png).decode("ascii")}" style="width:100%;height:auto" alt="月度別発行CPA">', unsafe_allow_html=True)
         _render_png_actions(
             cpa_png,
             f"月度別_発行CPA_{scope_suffix}.png",
@@ -2643,7 +2643,24 @@ st.markdown(
     "※現行版は2026/9/9更新"
 )
 
-col1, col2 = st.columns(2)
+# メインタブの文字・余白を明確に強調（StreamlitのDOM差異を考慮）
+st.markdown("""<style>
+[data-testid="stTabs"] [data-baseweb="tab-list"] button[data-baseweb="tab"] {
+    min-height: 64px !important;
+    padding: 14px 25px !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab-list"] button[data-baseweb="tab"] p,
+[data-testid="stTabs"] [data-baseweb="tab-list"] button[data-baseweb="tab"] span {
+    font-size: 22px !important;
+    font-weight: 800 !important;
+    line-height: 1.5 !important;
+}
+</style>""", unsafe_allow_html=True)
+tab_history, tab_planning, tab_competitor = st.tabs(["📊 過去実績分析", "🧮 プランニング", "📈 競合分析"])
+
+with tab_history:
+    st.markdown("**計測実績ファイルのアップロード**")
+    col1, col2 = st.columns(2)
 
 with col1:
     uploaded_file = st.file_uploader(
@@ -2692,21 +2709,6 @@ def render_af_monthly_history(af_history_df):
     monthly["発行率"] = monthly["発行率"].map(lambda v: "—" if pd.isna(v) else f"{v:.1%}")
     st.dataframe(monthly, use_container_width=True, hide_index=True)
 
-# メイン機能のタブだけを強調（内側の分析タブには適用しない）
-st.markdown("""<style>
-/* メインタブは画面内で最初のタブリスト */
-div[data-testid="stTabs"]:has(> div[data-baseweb="tab-list"]) > div[data-baseweb="tab-list"] > button[data-baseweb="tab"] {
-    font-size: 1.25rem !important;
-    font-weight: 750 !important;
-    padding: 0.9rem 1.6rem !important;
-    min-height: 3.7rem !important;
-}
-div[data-testid="stTabs"]:has(> div[data-baseweb="tab-list"]) > div[data-baseweb="tab-list"] > button[data-baseweb="tab"] p {
-    font-size: 1.25rem !important;
-    font-weight: 750 !important;
-}
-</style>""", unsafe_allow_html=True)
-tab_history, tab_planning, tab_competitor = st.tabs(["📊 過去実績分析", "🧮 プランニング", "📈 競合分析"])
 with tab_history:
     st.caption("アップロード済みの実績データを共通利用します。TG計測とAF計測は別集計です。")
 with tab_competitor:
