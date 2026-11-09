@@ -32,7 +32,7 @@ def _join(history, comp, media_reward, segment, own_product, rival_product, metr
 def show_competitor_cv_analysis(history):
     st.divider()
     st.subheader('競合商品還元額 × 楽天カードCV実績')
-    st.caption('指定したポイントサイト内で楽天カードと競合カードの還元額を比較し、楽天カードの全媒体合計CVとの関係を調べます。差額がプラスなら競合カードの還元額が高い状態です。')
+    st.caption('楽天カードを比較基準として固定表示し、競合3商品を初期選択します。差額がプラスなら競合カードの還元額が高い状態です。CVは全媒体合計です。')
     file = st.session_state.get('competitor_workbook')
     if file is None:
         st.info('競合還元額調査Excelをアップロードしてください。')
@@ -56,7 +56,7 @@ def show_competitor_cv_analysis(history):
         return
     rivals = [x for x in products if x != own_product]
     if not rivals: return
-    defaults = ['三井住友カード（NL）', '三井住友カード ゴールド（NL）', 'エポスカード', 'Paypayカード']
+    defaults = ['三井住友カード（NL）', 'エポスカード', '三菱UFJカード']
     # 調査ファイルの旧商品名を、表示・選択時に統一する。
     # 旧「三井住友カード」はNLと同一と断定できないため、自動統合しない。
     a,b,c = st.columns([2,1,1])
@@ -81,7 +81,7 @@ def show_competitor_cv_analysis(history):
         st.info('楽天カードと選択した競合商品の還元額が存在する媒体がありません。')
         return
     media = st.selectbox('還元額を比較するポイントサイト',eligible,key='product_reward_media')
-    st.caption('CV実績は媒体名で絞り込まず、アップロードされた対象実績を全媒体合算します。')
+    st.caption('CV実績は媒体名で絞り込まず、①と⑤のTG実績を全媒体合算します。⑤の追加データはプランニングに影響しません。')
     dmin = pd.to_datetime(history['date'],errors='coerce').min()
     dmax = pd.to_datetime(history['date'],errors='coerce').max()
     if pd.isna(dmin) or pd.isna(dmax): return

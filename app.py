@@ -2668,6 +2668,11 @@ with col1:
         type=["csv"],
         help="従来どおりのTG計測実績です。未アップロードでもAF計測実績があれば起動できます。",
     )
+    uploaded_extra_history = st.file_uploader(
+        "⑤ 競合分析用・過去TG計測実績CSV（追加）", type=["csv"],
+        accept_multiple_files=True, key="competitor_extra_history",
+        help="①と同じ形式。競合分析だけに追加し、プランニングの学習には使用しません。重複日付は安全のため追加分を除外します。",
+    )
     uploaded_af_apply = st.file_uploader(
         "③ AF計測 申込実績",
         type=["csv", "xlsx", "xlsm"],
@@ -2714,10 +2719,14 @@ with tab_history:
 with tab_competitor:
     st.subheader("競合分析ダッシュボード")
     from competitor_analysis import show_competitor_analysis
-    show_competitor_analysis()
     from competitor_cv_analysis import show_competitor_cv_analysis
+    competitor_analysis_slot = st.empty()
     competitor_history_slot = st.empty()
 
+
+if uploaded_master is None or (uploaded_file is None and uploaded_af_apply is None and uploaded_af_issue is None):
+    with tab_competitor, competitor_analysis_slot.container():
+        show_competitor_analysis()
 
 has_af_data = uploaded_af_apply is not None or uploaded_af_issue is not None
 has_any_actual = uploaded_file is not None or has_af_data
@@ -2793,6 +2802,7 @@ with tab_planning:
                 subset=["日付"],
                 keep="last",
             )
+            st.session_state["competitor_cpn_master"] = cpn_master[["日付", "CPN名"]].copy()
 
             if cpn_master.empty:
                 raise ValueError(
@@ -2821,6 +2831,9 @@ with tab_planning:
         except Exception as exc:
             st.error(f"ファイルの読み込みに失敗しました: {exc}")
             st.stop()
+
+        with tab_competitor, competitor_analysis_slot.container():
+            show_competitor_analysis()
 
         with tab_history:
             if has_af_data:
@@ -2899,6 +2912,10 @@ with tab_planning:
                 key_prefix="measurement_compare",
             )
 
+        from competitor_history import combine_for_competitor
+        competitor_daily_history, competitor_history_notices = combine_for_competitor(
+            history_df, uploaded_extra_history, exclude_compensation=exclude_compensation
+        )
         st.sidebar.header("商品ID選択")
         all_product_ids = sorted(
             [x for x in history_df["商品ID"].dropna().astype(str).unique() if str(x).strip() != ""]
@@ -2950,7 +2967,9 @@ with tab_planning:
         ].copy()
 
         with tab_competitor, competitor_history_slot.container():
-            show_competitor_cv_analysis(history_df)
+            for notice in competitor_history_notices:
+                st.warning(notice)
+            show_competitor_cv_analysis(competitor_daily_history)
 
         with tab_history:
             history_analytics_placeholder = st.empty()
