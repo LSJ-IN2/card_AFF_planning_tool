@@ -172,9 +172,10 @@ def show_competitor_cv_analysis(history, planning_forecast=None):
         planned_magi_dates = planning_forecast.loc[
             planning_forecast['CPN名'].astype(str).str.strip().eq('マジ得'), 'date'
         ].dropna().unique()
+    forecast_groups = tuple((media, segment, product) for product in [own_product] + list(series))
     future, _ = forecast_rewards(comp, st.session_state.get('competitor_cpn_master'),
                                  method=method, adjustment=adjustment, horizon_months=horizon_months,
-                                 planned_magi_dates=planned_magi_dates)
+                                 planned_magi_dates=planned_magi_dates, selected_groups=forecast_groups)
     if not future.empty:
         for product in [own_product] + list(series):
             f = future.loc[(future['商品'] == product) & (future['媒体'] == media) &

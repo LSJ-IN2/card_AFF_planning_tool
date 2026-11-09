@@ -1,6 +1,7 @@
 """Exploratory 3-month competitor reward scenarios; never modifies CV planning."""
 import pandas as pd
 import numpy as np
+import streamlit as st
 
 
 def _observed_magi_start_adjustment(g, magi_dates, max_survey_gap_days=7):
@@ -42,7 +43,8 @@ def _observed_magi_start_adjustment(g, magi_dates, max_survey_gap_days=7):
     return float(np.clip(np.median(downward) * 0.7, -5000, 0))
 
 
-def forecast_rewards(observed, cpn_master=None, method='過去傾向（マジ得考慮）', adjustment=0, horizon_months=3, planned_magi_dates=None):
+@st.cache_data(show_spinner=False, max_entries=6)
+def forecast_rewards(observed, cpn_master=None, method='過去傾向（マジ得考慮）', adjustment=0, horizon_months=3, planned_magi_dates=None, selected_groups=None):
     """Observed: 調査日, 媒体, セグメント, 商品, 還元額. Forecast from last observed day.
 
     A change-event model, with small-sample fallback to constant. Historical CPN
@@ -54,6 +56,11 @@ def forecast_rewards(observed, cpn_master=None, method='過去傾向（マジ得
     x['調査日'] = pd.to_datetime(x['調査日']).dt.normalize()
     x = x.sort_values('調査日').drop_duplicates(['調査日','媒体','セグメント','商品'], keep='last')
     anchor = x['調査日'].max()
+    if selected_groups is not None:
+        wanted = set(selected_groups)
+        x = x.loc[[tuple(row) in wanted for row in x[['媒体', 'セグメント', '商品']].itertuples(index=False, name=None)]]
+        if x.empty:
+            return pd.DataFrame(columns=['調査日','媒体','セグメント','商品','予測還元額']), pd.DataFrame()
     horizon = anchor + pd.DateOffset(months=horizon_months)
     days = pd.date_range(anchor + pd.Timedelta(days=1), horizon, freq='D')
     if len(days) == 0:
@@ -101,21 +108,22 @@ def forecast_rewards(observed, cpn_master=None, method='過去傾向（マジ得
         # estimated campaign effect to obtain the normal-regime baseline.
         last_was_magi = g['調査日'].iloc[-1] in magi_dates
         baseline = max(0.0, last - (magi_adjustment if last_was_magi else 0.0))
-        amount = baseline
-        for day in days:
-            if method == 'シナリオ（指定額を加算）':
-                amount = max(0, last + adjustment)
-            elif method == '現状維持':
-                amount = last
-            else:
-                # Expected movement is a smoothed *scenario*, not a confident point
-                # prediction. Cap drift to avoid extreme extrapolation.
-                scale = magi_factor if day in future_magi_dates else 1.0
-                amount = float(np.clip(amount + avg_delta * event_rate * scale, max(0,baseline-10000),baseline+10000))
-            predicted = amount
-            if method == '過去傾向（マジ得考慮）' and day in future_magi_dates:
-                predicted = max(0.0, amount + magi_adjustment)
-            records.append((day, media, segment, product, round(predicted, 1)))
+        # 日別の予測を一括計算し、Pythonの多重ループを回避する。
+        # ドリフトは日々同じ符号なので、累積和のクリップは逐次処理と等価。
+        if method == 'シナリオ（指定額を加算）':
+            predictions = np.full(len(days), max(0.0, last + adjustment))
+        elif method == '現状維持':
+            predictions = np.full(len(days), last)
+        else:
+            magi_mask = np.asarray(days.isin(future_magi_dates), dtype=bool)
+            scales = np.where(magi_mask, magi_factor, 1.0)
+            drift = np.cumsum(avg_delta * event_rate * scales)
+            amounts = np.clip(baseline + drift, max(0.0, baseline - 10000), baseline + 10000)
+            predictions = np.maximum(0.0, amounts + np.where(magi_mask, magi_adjustment, 0.0))
+        records.extend(
+            (day, media, segment, product, round(float(value), 1))
+            for day, value in zip(days, predictions)
+        )
         diagnostics.append((media, segment, product, len(g), len(changed), round(event_rate, 4), round(magi_factor, 2)))
     result = pd.DataFrame(records, columns=['調査日','媒体','セグメント','商品','予測還元額'])
     diag = pd.DataFrame(diagnostics, columns=['媒体','セグメント','商品','調査件数','変動回数','推定日次変動率','マジ得変動倍率'])

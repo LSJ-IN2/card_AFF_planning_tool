@@ -131,7 +131,9 @@ def show_competitor_analysis():
     method = st.selectbox("予測方式", ["過去傾向（マジ得考慮）", "現状維持", "シナリオ（指定額を加算）"], key="competitor_forecast_method")
     adjustment = st.number_input("シナリオ調整額（円）", value=0, step=1000, key="competitor_forecast_adjustment") if method == "シナリオ（指定額を加算）" else 0
     cpn = st.session_state.get("competitor_cpn_master")
-    future, diagnostics = forecast_rewards(df, cpn, method=method, adjustment=adjustment)
+    forecast_groups = tuple((m, seg, prod) for m in media for seg in segments for prod in products)
+    future, diagnostics = forecast_rewards(df, cpn, method=method, adjustment=adjustment,
+                                           selected_groups=forecast_groups)
     st.caption("予測は調査ファイルの最終調査日を起点とする3か月。過去傾向方式は調査間の変化を日次期待変化に換算した試算で、精度検証済みの予測ではありません。マジ得期間はCPNマスタ登録日のみ参照します。")
     st.subheader("媒体別・商品別還元額推移")
     st.caption("横軸＝調査日、縦軸＝還元額。媒体名を左に、推移グラフを右に並べます。商品ごとに色分けし、セグメントは別線にします。")
