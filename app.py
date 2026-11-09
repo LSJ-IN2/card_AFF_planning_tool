@@ -1682,6 +1682,13 @@ def _cached_unit_price_band_matrix(
     )
 
 
+# 月度別過去実績の設定変更では、関連グラフのみ再実行する。
+# 古いStreamlitでは従来動作にフォールバックする。
+def _history_analytics_fragment(func):
+    return st.fragment(func) if hasattr(st, "fragment") else func
+
+
+@_history_analytics_fragment
 def render_history_analytics(
     history_df: pd.DataFrame,
     current_plan_df: pd.DataFrame | None = None,

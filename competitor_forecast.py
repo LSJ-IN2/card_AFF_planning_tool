@@ -3,6 +3,45 @@ import pandas as pd
 import numpy as np
 
 
+def _observed_magi_start_adjustment(g, magi_dates, max_survey_gap_days=7):
+    """Estimate a downward reaction only from independently observed CPN starts.
+
+    An event counts only if a survey immediately before a campaign is normal,
+    a survey immediately after its start is within the campaign, and the
+    survey-to-survey interval is short enough to attribute the direction.
+    Two distinct negative start events are required; no event means no effect.
+    This is an association, not proof that the campaign caused the change.
+    """
+    if not magi_dates:
+        return 0.0
+    dates = sorted(pd.Timestamp(d).normalize() for d in magi_dates)
+    starts = [d for i, d in enumerate(dates)
+              if i == 0 or (d - dates[i - 1]).days > 1]
+    survey = g[['調査日', '還元額']].copy()
+    survey['調査日'] = pd.to_datetime(survey['調査日']).dt.normalize()
+    survey['還元額'] = pd.to_numeric(survey['還元額'], errors='coerce')
+    survey = survey.dropna().sort_values('調査日')
+    deltas = []
+    for start in starts:
+        before = survey.loc[survey['調査日'] < start]
+        after = survey.loc[(survey['調査日'] >= start) & survey['調査日'].isin(magi_dates)]
+        if before.empty or after.empty:
+            continue
+        pre = before.iloc[-1]
+        post = after.iloc[0]
+        if pre['調査日'] in magi_dates:
+            continue
+        if (post['調査日'] - pre['調査日']).days > max_survey_gap_days:
+            continue
+        deltas.append(float(post['還元額'] - pre['還元額']))
+    # A single drop can be incidental. Require repeated negative reactions,
+    # and reject contradictory observed increases at campaign starts.
+    if len(deltas) < 2 or sum(d < 0 for d in deltas) < 2 or any(d > 0 for d in deltas):
+        return 0.0
+    downward = [d for d in deltas if d < 0]
+    return float(np.clip(np.median(downward) * 0.7, -5000, 0))
+
+
 def forecast_rewards(observed, cpn_master=None, method='過去傾向（マジ得考慮）', adjustment=0, horizon_months=3, planned_magi_dates=None):
     """Observed: 調査日, 媒体, セグメント, 商品, 還元額. Forecast from last observed day.
 
@@ -55,20 +94,9 @@ def forecast_rewards(observed, cpn_master=None, method='過去傾向（マジ得
                 rate_n = tmp.loc[~tmp['magi'], 'changed'].mean()
                 if rate_n > 0:
                     magi_factor = float(np.clip(rate_m / rate_n, 0.5, 2.0))
-        # Estimate an amount difference, not merely the frequency of changes.
-        # Only compare regimes with at least two surveyed dates each. Keep the
-        # base forecast independent so the adjustment ends with the campaign.
-        magi_adjustment = 0.0
-        if magi_dates:
-            observed_magi = g['調査日'].isin(magi_dates)
-            if observed_magi.sum() >= 2 and (~observed_magi).sum() >= 2:
-                magi_values = pd.to_numeric(g.loc[observed_magi, '還元額'], errors='coerce').dropna()
-                normal_values = pd.to_numeric(g.loc[~observed_magi, '還元額'], errors='coerce').dropna()
-                if len(magi_values) >= 2 and len(normal_values) >= 2:
-                    difference = float(magi_values.median() - normal_values.median())
-                    # Restrict to the downward association requested; avoid
-                    # treating a sparse observational pattern as certain.
-                    magi_adjustment = float(np.clip(difference * 0.7, -5000, 0))
+        # Only use repeated observed drops across distinct campaign starts.
+        # A lower median during CPN periods alone is not evidence of reaction.
+        magi_adjustment = _observed_magi_start_adjustment(g, magi_dates)
         # The last observed amount may itself be a campaign amount. Remove its
         # estimated campaign effect to obtain the normal-regime baseline.
         last_was_magi = g['調査日'].iloc[-1] in magi_dates
