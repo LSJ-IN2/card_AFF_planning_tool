@@ -1,7 +1,6 @@
 """楽天カードと競合商品の還元額差が楽天カードCVに関係するか探索する。"""
 import pandas as pd
 import plotly.graph_objects as go
-from plotly.colors import qualitative
 import streamlit as st
 from competitor_analysis import parse_competitor_workbook
 
@@ -123,19 +122,6 @@ def show_competitor_cv_analysis(history, planning_forecast=None):
     else:
         plan = pd.DataFrame()
 
-    # 商品ごとに色を固定。予測は同色の破線で区別する。
-    product_colors = {
-        '楽天カード': '#C94B52',
-        'エポスカード': '#238B72',
-        '三井住友カード（NL）': '#4D76C7',
-        '三菱UFJカード': '#A17BC5',
-    }
-    fallback_colors = [c for c in qualitative.Dark24 if c.lower() not in
-                       {v.lower() for v in product_colors.values()}]
-    other_products = sorted(set(products) - set(product_colors))
-    product_colors.update({name: fallback_colors[i % len(fallback_colors)]
-                           for i, name in enumerate(other_products)})
-    cv_color = '#8B98A8'
     fig = go.Figure()
     cv_daily = history.copy()
     cv_daily['date'] = pd.to_datetime(cv_daily['date'], errors='coerce').dt.normalize()
@@ -143,20 +129,17 @@ def show_competitor_cv_analysis(history, planning_forecast=None):
     cv_daily[metric] = pd.to_numeric(cv_daily[metric], errors='coerce').fillna(0)
     cv_daily = cv_daily.groupby('date', as_index=False)[metric].sum()
     fig.add_trace(go.Bar(x=cv_daily['date'], y=cv_daily[metric],
-                         name=f'楽天カード全媒体合計{metric_label}', opacity=0.55,
-                         marker_color=cv_color))
+                         name=f'楽天カード全媒体合計{metric_label}', opacity=0.45))
     if not plan.empty:
         fig.add_trace(go.Bar(x=plan['date'], y=plan['予測CV'],
                              name=f'楽天カード全媒体合計{metric_label}（プランニング予測）',
-                             opacity=0.85, marker_color=cv_color, marker_pattern_shape='/'))
+                             opacity=0.65, marker_pattern_shape='/'))
     base = next(iter(series.values()))
     fig.add_trace(go.Scatter(x=base['date'], y=base['自社還元額'],
-                             name='楽天カード還元額', mode='lines', line_shape='hv', yaxis='y2',
-                             line=dict(color=product_colors[own_product], width=2.5)))
+                             name='楽天カード還元額', mode='lines', line_shape='hv', yaxis='y2'))
     for product, df in series.items():
         fig.add_trace(go.Scatter(x=df['date'], y=df['競合還元額'],
-                                 name=product, mode='lines', line_shape='hv', yaxis='y2',
-                                 line=dict(color=product_colors[product], width=2.5)))
+                                 name=product, mode='lines', line_shape='hv', yaxis='y2'))
     # 競合還元額予測も同じグラフに表示。予測方式は上部の競合分析設定と共通。
     from competitor_forecast import forecast_rewards
     method = st.session_state.get('competitor_forecast_method', '過去傾向（マジ得考慮）')
@@ -183,25 +166,11 @@ def show_competitor_cv_analysis(history, planning_forecast=None):
                 x, y = f['調査日'], f['予測還元額']
             fig.add_trace(go.Scatter(x=x, y=y, name=f'{product}（還元額予測）',
                                      mode='lines', line_shape='hv', yaxis='y2',
-                                     line=dict(color=product_colors[product], dash='dash', width=2.5)))
+                                     line=dict(dash='dash')))
     if not plan.empty:
         st.caption('棒：楽天カードCV実績／プランニング予測。実線：還元額調査実績。破線：還元額予測シナリオ。CV予測には競合還元額による補正を加えていません。')
     else:
         st.caption('プランニング予測が算出されると、CV予測をこのグラフにも表示します。還元額の破線は参考シナリオです。')
-    # 未来の開始を淡い背景で示す（実績期間は塗らない）。
-    future_starts = []
-    if not plan.empty:
-        future_starts.append(plan['date'].min())
-    if not future.empty:
-        future_starts.append(pd.to_datetime(future['調査日'], errors='coerce').min())
-    future_starts = [d for d in future_starts if pd.notna(d)]
-    if future_starts:
-        forecast_start = min(future_starts)
-        fig.add_vrect(x0=forecast_start, x1=max(
-            [forecast_start] + ([plan['date'].max()] if not plan.empty else []) +
-            ([pd.to_datetime(future['調査日']).max()] if not future.empty else [])),
-            fillcolor='rgba(148,163,184,0.10)', opacity=1,
-            line_width=0, layer='below')
     fig.update_layout(height=430, hovermode='x unified',
                       yaxis=dict(title='CV（件）', showgrid=False),
                       yaxis2=dict(title='還元額（円）', overlaying='y', side='right', showgrid=False),
