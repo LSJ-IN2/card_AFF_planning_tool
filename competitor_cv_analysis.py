@@ -29,7 +29,7 @@ def _join(history, comp, media_reward, segment, own_product, rival_product, metr
     return own
 
 
-def show_competitor_cv_analysis(history):
+def show_competitor_cv_analysis(history, planning_forecast=None):
     st.divider()
     st.subheader('競合商品還元額 × 楽天カードCV実績')
     st.caption('楽天カードを比較基準として固定表示し、競合3商品を初期選択します。差額がプラスなら競合カードの還元額が高い状態です。CVは全媒体合計です。')
@@ -104,6 +104,24 @@ def show_competitor_cv_analysis(history):
         st.warning('このポイントサイトで比較可能なデータがない商品: ' + '、'.join(missing))
     st.caption('還元額は各商品の直近調査値を次の調査日まで引き継ぎます（分析期間開始前の調査値も利用）。比較可能日数は商品ごとに異なる場合があります。')
     st.markdown('#### ① 楽天カードCVと選択商品の還元額推移')
+    # 予測はプランニングの計算結果を読み取り専用で参照する。
+    plan = pd.DataFrame() if planning_forecast is None else planning_forecast.copy()
+    if not plan.empty and {'date', 'forecast_cv'}.issubset(plan.columns):
+        plan['date'] = pd.to_datetime(plan['date'], errors='coerce').dt.normalize()
+        plan = plan.dropna(subset=['date'])
+        plan['forecast_cv'] = pd.to_numeric(plan['forecast_cv'], errors='coerce').fillna(0)
+        if metric == 'cv':
+            plan['予測CV'] = plan['forecast_cv']
+        else:
+            if 'approval_rate' in plan.columns:
+                plan['予測CV'] = plan['forecast_cv'] * pd.to_numeric(plan['approval_rate'], errors='coerce').fillna(0).clip(0, 1)
+            else:
+                plan = pd.DataFrame()
+        if not plan.empty:
+            plan = plan.groupby('date', as_index=False)['予測CV'].sum().sort_values('date')
+    else:
+        plan = pd.DataFrame()
+
     fig = go.Figure()
     cv_daily = history.copy()
     cv_daily['date'] = pd.to_datetime(cv_daily['date'], errors='coerce').dt.normalize()
@@ -112,12 +130,47 @@ def show_competitor_cv_analysis(history):
     cv_daily = cv_daily.groupby('date', as_index=False)[metric].sum()
     fig.add_trace(go.Bar(x=cv_daily['date'], y=cv_daily[metric],
                          name=f'楽天カード全媒体合計{metric_label}', opacity=0.45))
+    if not plan.empty:
+        fig.add_trace(go.Bar(x=plan['date'], y=plan['予測CV'],
+                             name=f'楽天カード全媒体合計{metric_label}（プランニング予測）',
+                             opacity=0.65, marker_pattern_shape='/'))
     base = next(iter(series.values()))
     fig.add_trace(go.Scatter(x=base['date'], y=base['自社還元額'],
                              name='楽天カード還元額', mode='lines', line_shape='hv', yaxis='y2'))
     for product, df in series.items():
         fig.add_trace(go.Scatter(x=df['date'], y=df['競合還元額'],
                                  name=product, mode='lines', line_shape='hv', yaxis='y2'))
+    # 競合還元額予測も同じグラフに表示。予測方式は上部の競合分析設定と共通。
+    from competitor_forecast import forecast_rewards
+    method = st.session_state.get('competitor_forecast_method', '過去傾向（マジ得考慮）')
+    adjustment = st.session_state.get('competitor_forecast_adjustment', 0) if method == 'シナリオ（指定額を加算）' else 0
+    horizon_months = 3
+    if not plan.empty:
+        last_survey = pd.to_datetime(comp['調査日']).max()
+        horizon_months = max(3, int((plan['date'].max() - last_survey).days / 28) + 2)
+        horizon_months = min(horizon_months, 36)
+    future, _ = forecast_rewards(comp, st.session_state.get('competitor_cpn_master'),
+                                 method=method, adjustment=adjustment, horizon_months=horizon_months)
+    if not future.empty:
+        for product in [own_product] + list(series):
+            f = future.loc[(future['商品'] == product) & (future['媒体'] == media) &
+                           (future['セグメント'] == segment)].sort_values('調査日')
+            if f.empty:
+                continue
+            last = _daily_amount(comp, product, media, segment, '実績')
+            if not last.empty:
+                anchor = last.iloc[-1]
+                x = pd.concat([pd.Series([anchor['調査日_実績']]), f['調査日']], ignore_index=True)
+                y = pd.concat([pd.Series([anchor['実績']]), f['予測還元額']], ignore_index=True)
+            else:
+                x, y = f['調査日'], f['予測還元額']
+            fig.add_trace(go.Scatter(x=x, y=y, name=f'{product}（還元額予測）',
+                                     mode='lines', line_shape='hv', yaxis='y2',
+                                     line=dict(dash='dash')))
+    if not plan.empty:
+        st.caption('棒：楽天カードCV実績／プランニング予測。実線：還元額調査実績。破線：還元額予測シナリオ。CV予測には競合還元額による補正を加えていません。')
+    else:
+        st.caption('プランニング予測が算出されると、CV予測をこのグラフにも表示します。還元額の破線は参考シナリオです。')
     fig.update_layout(height=430, hovermode='x unified',
                       yaxis=dict(title='CV（件）', showgrid=False),
                       yaxis2=dict(title='還元額（円）', overlaying='y', side='right', showgrid=False),

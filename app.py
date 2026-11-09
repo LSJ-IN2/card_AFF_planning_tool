@@ -2966,11 +2966,6 @@ with tab_planning:
             history_df["media"].isin(selected_media)
         ].copy()
 
-        with tab_competitor, competitor_history_slot.container():
-            for notice in competitor_history_notices:
-                st.warning(notice)
-            show_competitor_cv_analysis(competitor_daily_history)
-
         with tab_history:
             history_analytics_placeholder = st.empty()
         try:
@@ -3978,6 +3973,12 @@ with tab_planning:
             }
 
             st.session_state.pop("submission_excel", None)
+
+        # 競合分析のCV推移に、今回のプランニング予測を連動する。
+        with tab_competitor, competitor_history_slot.container():
+            for notice in competitor_history_notices:
+                st.warning(notice)
+            show_competitor_cv_analysis(competitor_daily_history, planning_forecast=forecast_df)
 
         if needs_normal_learning and not forecast_df.empty:
             normal_pub_summary_mask = forecast_df["CPN名"].astype(str).str.strip().isin(normal_labels)
