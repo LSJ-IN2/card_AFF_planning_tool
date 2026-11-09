@@ -28,38 +28,6 @@ from logic.simulation import simulate_plan
 from logic.optimize import optimize_budget
 from logic.analytics import prepare_monthly_performance, prepare_unit_price_band_matrix
 
-# Heavy historical aggregations are invariant under unrelated planning/competitor
-# widget changes. Streamlit hashes the DataFrame and invalidates on data changes.
-@st.cache_data(show_spinner=False, max_entries=8)
-def _cached_monthly_performance(df):
-    return prepare_monthly_performance(df)
-
-
-@st.cache_data(show_spinner=False, max_entries=12)
-def _cached_price_band_matrix(df, band_step, value_metric):
-    return prepare_unit_price_band_matrix(
-        df, band_step=band_step, value_metric=value_metric, max_bands=40
-    )
-
-
-@st.cache_data(show_spinner=False, max_entries=6)
-def _cached_af_history(apply_bytes, issue_bytes, af_code_master, cpn_master):
-    return _prepare_af_history(
-        BytesIO(apply_bytes) if apply_bytes is not None else None,
-        BytesIO(issue_bytes) if issue_bytes is not None else None,
-        af_code_master, cpn_master,
-    )
-
-
-@st.cache_data(show_spinner=False, max_entries=6)
-def _cached_af_code_history(apply_bytes, issue_bytes, af_code_master, cpn_master):
-    return _prepare_af_code_history(
-        BytesIO(apply_bytes) if apply_bytes is not None else None,
-        BytesIO(issue_bytes) if issue_bytes is not None else None,
-        af_code_master, cpn_master,
-    )
-
-
 def format_date(df, col="date"):
     return (
         pd.to_datetime(df[col])
@@ -1730,7 +1698,7 @@ def render_history_analytics(
             st.info("マジ得期間に該当する過去実績がありません。")
             return
 
-    monthly = _cached_monthly_performance(analytics_df)
+    monthly = prepare_monthly_performance(analytics_df)
     if monthly.empty:
         st.info("月度が付与された過去実績がないため、月度別グラフを表示できません。")
         return
@@ -1813,8 +1781,11 @@ def render_history_analytics(
                 index=0,
             )
 
-        band_matrix = _cached_price_band_matrix(
-            analytics_df, int(band_step), band_metric
+        band_matrix = prepare_unit_price_band_matrix(
+            analytics_df,
+            band_step=int(band_step),
+            value_metric=band_metric,
+            max_bands=40,
         )
 
         if current_chart_plan is not None and not current_chart_plan.empty:
@@ -2849,18 +2820,12 @@ with tab_planning:
                 else 0
             )
 
-            if has_af_data:
-                af_apply_bytes = uploaded_af_apply.getvalue() if uploaded_af_apply is not None else None
-                af_issue_bytes = uploaded_af_issue.getvalue() if uploaded_af_issue is not None else None
-                af_history_df = _cached_af_history(
-                    af_apply_bytes, af_issue_bytes, af_code_master, cpn_master
-                )
-                af_code_history_df = _cached_af_code_history(
-                    af_apply_bytes, af_issue_bytes, af_code_master, cpn_master
-                )
-            else:
-                af_history_df = pd.DataFrame()
-                af_code_history_df = pd.DataFrame()
+            af_history_df = _prepare_af_history(
+                uploaded_af_apply, uploaded_af_issue, af_code_master, cpn_master
+            ) if has_af_data else pd.DataFrame()
+            af_code_history_df = _prepare_af_code_history(
+                uploaded_af_apply, uploaded_af_issue, af_code_master, cpn_master
+            ) if has_af_data else pd.DataFrame()
 
 
         except Exception as exc:
