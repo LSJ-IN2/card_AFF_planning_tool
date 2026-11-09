@@ -166,8 +166,15 @@ def show_competitor_cv_analysis(history, planning_forecast=None):
         last_survey = pd.to_datetime(comp['調査日']).max()
         horizon_months = max(3, int((plan['date'].max() - last_survey).days / 28) + 2)
         horizon_months = min(horizon_months, 36)
+    # Read campaign dates from the current planning result (both measure slots).
+    planned_magi_dates = None
+    if planning_forecast is not None and not planning_forecast.empty and {'date', 'CPN名'}.issubset(planning_forecast.columns):
+        planned_magi_dates = planning_forecast.loc[
+            planning_forecast['CPN名'].astype(str).str.strip().eq('マジ得'), 'date'
+        ].dropna().unique()
     future, _ = forecast_rewards(comp, st.session_state.get('competitor_cpn_master'),
-                                 method=method, adjustment=adjustment, horizon_months=horizon_months)
+                                 method=method, adjustment=adjustment, horizon_months=horizon_months,
+                                 planned_magi_dates=planned_magi_dates)
     if not future.empty:
         for product in [own_product] + list(series):
             f = future.loc[(future['商品'] == product) & (future['媒体'] == media) &
