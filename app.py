@@ -2662,34 +2662,34 @@ with tab_history:
     st.markdown("**計測実績ファイルのアップロード**")
     col1, col2 = st.columns(2)
 
-with col1:
-    uploaded_file = st.file_uploader(
-        "① TG計測 実績CSV",
-        type=["csv"],
-        help="従来どおりのTG計測実績です。未アップロードでもAF計測実績があれば起動できます。",
-    )
-    uploaded_extra_history = st.file_uploader(
-        "⑤ 競合分析用・過去TG計測実績CSV（追加）", type=["csv"],
-        accept_multiple_files=True, key="competitor_extra_history",
-        help="①と同じ形式。競合分析だけに追加し、プランニングの学習には使用しません。重複日付は安全のため追加分を除外します。",
-    )
-    uploaded_af_apply = st.file_uploader(
-        "③ AF計測 申込実績",
-        type=["csv", "xlsx", "xlsm"],
-        help="A列=日付（YYYYMMDD）、B列以降の1行目=AFコード、各セル=件数のAF申込実績。",
-    )
+    with col1:
+        uploaded_file = st.file_uploader(
+            "① TG計測 実績CSV",
+            type=["csv"],
+            help="従来どおりのTG計測実績です。未アップロードでもAF計測実績があれば起動できます。",
+        )
+        uploaded_extra_history = st.file_uploader(
+            "⑤ 競合分析用・過去TG計測実績CSV（追加）", type=["csv"],
+            accept_multiple_files=True, key="competitor_extra_history",
+            help="①と同じ形式。競合分析だけに追加し、プランニングの学習には使用しません。重複日付は安全のため追加分を除外します。",
+        )
+        uploaded_af_apply = st.file_uploader(
+            "③ AF計測 申込実績",
+            type=["csv", "xlsx", "xlsm"],
+            help="A列=日付（YYYYMMDD）、B列以降の1行目=AFコード、各セル=件数のAF申込実績。",
+        )
 
-with col2:
-    uploaded_master = st.file_uploader(
-        "② CPNマスタ",
-        type=["xlsx", "xlsm"],
-        help="『CPNマスタ』『媒体名マスタ』に加え、AF計測利用時は『AFコードマスタ』シートを使用します。",
-    )
-    uploaded_af_issue = st.file_uploader(
-        "④ AF計測 発行実績",
-        type=["csv", "xlsx", "xlsm"],
-        help="A列=日付（YYYYMMDD）、B列以降の1行目=AFコード、各セル=件数のAF発行実績。",
-    )
+    with col2:
+        uploaded_master = st.file_uploader(
+            "② CPNマスタ",
+            type=["xlsx", "xlsm"],
+            help="『CPNマスタ』『媒体名マスタ』に加え、AF計測利用時は『AFコードマスタ』シートを使用します。",
+        )
+        uploaded_af_issue = st.file_uploader(
+            "④ AF計測 発行実績",
+            type=["csv", "xlsx", "xlsm"],
+            help="A列=日付（YYYYMMDD）、B列以降の1行目=AFコード、各セル=件数のAF発行実績。",
+        )
 
 def render_af_monthly_history(af_history_df):
     """アップロード済みAF計測実績を月度別に表示する（TG実績とは別集計）。"""
