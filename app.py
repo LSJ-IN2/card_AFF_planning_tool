@@ -2807,6 +2807,7 @@ with tab_planning:
             )
             from config.constants import RECENT_NORMAL_DAYS
 
+            _aff_perf_mark('input: before TG/master loading')
             history_df = pd.DataFrame()
             tg_raw_max_date = pd.NaT
             if uploaded_file is not None:
@@ -2817,6 +2818,7 @@ with tab_planning:
                 ).dt.normalize()
                 tg_raw_max_date = history_df["date"].max()
 
+            _aff_perf_mark('input: TG loaded; before master')
             cpn_master, media_master, af_code_master = load_master_workbook_with_af(uploaded_master)
 
             required_master_columns = {"日付", "CPN名", "月度"}
@@ -2873,6 +2875,7 @@ with tab_planning:
                 else 0
             )
 
+            _aff_perf_mark('input: master loaded; before AF history')
             af_history_df = _prepare_af_history(
                 uploaded_af_apply, uploaded_af_issue, af_code_master, cpn_master
             ) if has_af_data else pd.DataFrame()
@@ -2885,9 +2888,11 @@ with tab_planning:
             st.error(f"ファイルの読み込みに失敗しました: {exc}")
             st.stop()
 
+        _aff_perf_mark('input: AF prepared; before competitor overview')
         with tab_competitor, competitor_analysis_slot.container():
             show_competitor_analysis()
 
+        _aff_perf_mark('input: competitor overview done; before AF monthly history')
         with tab_history:
             if has_af_data:
                 render_af_monthly_history(af_history_df)
@@ -2901,6 +2906,7 @@ with tab_planning:
             st.info("AF計測実績のみを読み込みました。TG実績がないため、従来の媒体別予測・最適化・提出用Excel生成は表示していません。")
             st.stop()
 
+        _aff_perf_mark('input: AF monthly done; before TG merges')
         history_df = history_df.merge(
             cpn_master[
                 [
@@ -2956,6 +2962,7 @@ with tab_planning:
             .fillna("未分類")
         )
 
+        _aff_perf_mark('input: TG merges done; before measurement tabs')
         with tab_history:
             st.subheader("📊 計測結果")
             _render_measurement_tabs(
@@ -2965,10 +2972,12 @@ with tab_planning:
                 key_prefix="measurement_compare",
             )
 
+        _aff_perf_mark('input: measurement tabs done; before competitor history merge')
         from competitor_history import combine_for_competitor
         competitor_daily_history, competitor_history_notices = combine_for_competitor(
             history_df, uploaded_extra_history, exclude_compensation=exclude_compensation
         )
+        _aff_perf_mark('input: competitor history merged; before product/media selectors')
         st.sidebar.header("商品ID選択")
         all_product_ids = sorted(
             [x for x in history_df["商品ID"].dropna().astype(str).unique() if str(x).strip() != ""]
@@ -3078,6 +3087,7 @@ with tab_planning:
                 f"{approval_exc}"
             )
 
+        _aff_perf_mark('input: selectors and metrics done')
         _aff_perf_mark('before campaign sidebar')
         st.sidebar.header("📊 対象期間・施策")
 
@@ -4038,6 +4048,7 @@ with tab_planning:
                 st.warning(notice)
             show_competitor_cv_analysis(competitor_daily_history, planning_forecast=forecast_df)
 
+        _aff_perf_mark('output: competitor CV chart done; before publication tables')
         if needs_normal_learning and not forecast_df.empty:
             normal_pub_summary_mask = forecast_df["CPN名"].astype(str).str.strip().isin(normal_labels)
             normal_pub_rows = forecast_df.loc[normal_pub_summary_mask].copy()
@@ -4083,6 +4094,7 @@ with tab_planning:
                         hide_index=True,
                     )
 
+        _aff_perf_mark('output: publication tables done; before forecast factors dataframe')
         with st.expander("予測係数の確認"):
             factor_cols = [
                 "date",
@@ -4114,6 +4126,7 @@ with tab_planning:
                 hide_index=True,
             )
 
+        _aff_perf_mark('output: factors dataframe done; before summary tables')
         st.subheader("📊 松竹梅")
         st.dataframe(
             sim_report_table,
@@ -4126,6 +4139,7 @@ with tab_planning:
             width="stretch",
         )
 
+        _aff_perf_mark('output: summary tables done; before manual settings section')
         st.subheader("✍️ 手動設定")
         st.caption(
             "初期件数は掲載状態反映後のForecast、単価・承認率は最適プランと過去実績から自動設定。"
