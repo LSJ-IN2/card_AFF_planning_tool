@@ -173,6 +173,7 @@ def _set_percent(ws, row, col, value):
     cell.value = value
     cell.number_format = "0.0%"
 
+@st.cache_data(show_spinner=False, max_entries=12)
 def _calculate_media_approval_rates(history_df: pd.DataFrame) -> dict:
     """
     過去実績の『成果承認フラグ = Y』を発行数として、媒体別承認率を算出する。
@@ -269,6 +270,7 @@ def _calculate_media_approval_rates(history_df: pd.DataFrame) -> dict:
 
 
 
+@st.cache_data(show_spinner=False, max_entries=12)
 def _calculate_period_media_metrics(history_df: pd.DataFrame):
     """
     媒体別に定常・マジ得の過去実績指標を作る。
@@ -2447,6 +2449,7 @@ def _prepare_af_code_history(uploaded_af_apply, uploaded_af_issue, af_code_maste
         af["月度"] = af["月度"].astype("string").str.strip().replace("", pd.NA).fillna("未設定")
     return af.sort_values(["date", "AFコード"]).reset_index(drop=True)
 
+@st.cache_data(show_spinner=False, max_entries=12)
 def _tg_daily_measurement(history_df):
     if history_df is None or history_df.empty:
         return pd.DataFrame(columns=["date", "TG申込", "TG発行", "CPN名", "月度"])
