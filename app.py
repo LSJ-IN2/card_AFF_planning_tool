@@ -1914,6 +1914,7 @@ def _daily_pair_average(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+@st.cache_data(show_spinner=False, max_entries=12)
 def _calculate_normal_month_base(
     history_df: pd.DataFrame,
     selected_months: list[str],
@@ -1923,6 +1924,20 @@ def _calculate_normal_month_base(
     from logic.factors import calculate_normal_month_base
 
     return calculate_normal_month_base(history_df, selected_months, calendar_dates=calendar_dates)
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _cached_selected_cpn_base(history_df: pd.DataFrame, selected_cpn: str, selected_periods: tuple) -> pd.DataFrame:
+    """元実績・参照CPN・参照期間が同じときは基礎値を再利用する。"""
+    from logic.factors import calculate_selected_cpn_base
+    return calculate_selected_cpn_base(history_df, selected_cpn, list(selected_periods))
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _cached_media_continuation_table(history_df: pd.DataFrame, cpn_master: pd.DataFrame, cutoff_date) -> pd.DataFrame:
+    """元実績・CPNマスタ・締切日が同じときは掲載継続率を再利用する。"""
+    from logic.factors import calculate_media_continuation_table
+    return calculate_media_continuation_table(history_df, cpn_master=cpn_master, cutoff_date=cutoff_date)
+
 
 def _cpn_month_sort_key(label: str):
     """CPNマスタの月度ラベルを日付範囲ではなくラベル自体で時系列化する。"""
@@ -3202,10 +3217,10 @@ with tab_planning:
                     st.warning(f"{seg['label']}の参照期間を1つ以上選択してください。")
                     st.stop()
                 selected_periods = [period_options[label] for label in selected_period_labels]
-                base_pair_seg = calculate_selected_cpn_base(
+                base_pair_seg = _cached_selected_cpn_base(
                     history_df,
                     selected_cpn,
-                    selected_periods,
+                    tuple(selected_periods),
                 )
                 if base_pair_seg.empty:
                     st.error(f"{seg['label']}の選択参照期間に対象媒体の実績がありません。")
@@ -3374,7 +3389,7 @@ with tab_planning:
             continuation_history = history_df.loc[
                 pd.to_datetime(history_df["date"], errors="coerce").dt.normalize().le(normal_learning_cutoff)
             ].copy()
-            continuation_table_main = calculate_media_continuation_table(
+            continuation_table_main = _cached_media_continuation_table(
                 continuation_history,
                 cpn_master=cpn_master,
                 cutoff_date=normal_learning_cutoff,
