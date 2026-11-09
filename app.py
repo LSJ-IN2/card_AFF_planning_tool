@@ -1664,6 +1664,22 @@ def _chart_month_label(value) -> str:
         return f"{match.group(1)}/{int(match.group(2)):02d}"
     return text
 
+# ファイル読み込みには触れず、過去実績の純粋な集計結果だけを再利用する。
+# 入力DataFrameや集計条件が変わると自動でキャッシュが更新される。
+@st.cache_data(show_spinner=False, max_entries=12)
+def _cached_monthly_performance(history_df: pd.DataFrame) -> pd.DataFrame:
+    return prepare_monthly_performance(history_df)
+
+
+@st.cache_data(show_spinner=False, max_entries=24)
+def _cached_unit_price_band_matrix(
+    history_df: pd.DataFrame, band_step: int, value_metric: str, max_bands: int = 40
+) -> pd.DataFrame:
+    return prepare_unit_price_band_matrix(
+        history_df, band_step=band_step, value_metric=value_metric, max_bands=max_bands
+    )
+
+
 def render_history_analytics(
     history_df: pd.DataFrame,
     current_plan_df: pd.DataFrame | None = None,
@@ -1698,7 +1714,7 @@ def render_history_analytics(
             st.info("マジ得期間に該当する過去実績がありません。")
             return
 
-    monthly = prepare_monthly_performance(analytics_df)
+    monthly = _cached_monthly_performance(analytics_df)
     if monthly.empty:
         st.info("月度が付与された過去実績がないため、月度別グラフを表示できません。")
         return
@@ -1781,7 +1797,7 @@ def render_history_analytics(
                 index=0,
             )
 
-        band_matrix = prepare_unit_price_band_matrix(
+        band_matrix = _cached_unit_price_band_matrix(
             analytics_df,
             band_step=int(band_step),
             value_metric=band_metric,
