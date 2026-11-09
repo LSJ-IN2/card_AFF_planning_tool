@@ -2668,6 +2668,16 @@ def _render_measurement_tabs(tg_df=None, af_df=None, af_code_df=None, key_prefix
             st.dataframe(display, width="stretch", hide_index=True)
             st.caption("差分は TG − AF。プラスならTG計測の方が多く、マイナスならAF計測の方が多い値です。")
 
+import time as _aff_perf_time
+_aff_perf_start = _aff_perf_time.perf_counter()
+_aff_perf_last = _aff_perf_start
+
+def _aff_perf_mark(name):
+    global _aff_perf_last
+    now = _aff_perf_time.perf_counter()
+    print(f"[AFF-PERF] {name}: section={now - _aff_perf_last:.2f}s total={now - _aff_perf_start:.2f}s", flush=True)
+    _aff_perf_last = now
+
 st.set_page_config(page_title="AFプランニングツール", layout="wide")
 st.title("📊 件数予測＆プランニングツール")
 st.caption(
@@ -2699,6 +2709,7 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 tab_history, tab_planning, tab_competitor = st.tabs(["📊 過去実績分析", "🧮 プランニング", "📈 競合分析"])
 
+_aff_perf_mark('history tab start')
 with tab_history:
     st.markdown("**計測実績ファイルのアップロード**")
     col1, col2 = st.columns(2)
@@ -2772,6 +2783,7 @@ if uploaded_master is None or (uploaded_file is None and uploaded_af_apply is No
 has_af_data = uploaded_af_apply is not None or uploaded_af_issue is not None
 has_any_actual = uploaded_file is not None or has_af_data
 
+_aff_perf_mark('planning tab start')
 with tab_planning:
     if uploaded_master and has_any_actual:
         exclude_compensation = True
@@ -3066,6 +3078,7 @@ with tab_planning:
                 f"{approval_exc}"
             )
 
+        _aff_perf_mark('before campaign sidebar')
         st.sidebar.header("📊 対象期間・施策")
 
         cpn_list = sorted(
@@ -3127,6 +3140,7 @@ with tab_planning:
                 key="planning_end_2",
             )
 
+        _aff_perf_mark('campaign sidebar finished')
         planning_segments = [
             {"label": "施策①", "cpn": selected_cpn_1, "start": start_date_1, "end": end_date_1}
         ]
@@ -3876,6 +3890,7 @@ with tab_planning:
                 future_parts.append(part)
 
             future_df = pd.concat(future_parts, ignore_index=True)
+            _aff_perf_mark('forecast CV start')
             forecast_df = forecast_cv(future_df, factor_tables)
 
             forecast_df = enforce_premium_media_cost(
@@ -3964,6 +3979,7 @@ with tab_planning:
                 sim_summary
             )
 
+            _aff_perf_mark('optimization start')
             opt_df = optimize_budget(
                 sim_df,
                 opt_mode,
@@ -4016,6 +4032,7 @@ with tab_planning:
             st.session_state.pop("submission_excel", None)
 
         # 競合分析のCV推移に、今回のプランニング予測を連動する。
+        _aff_perf_mark('competitor history start')
         with tab_competitor, competitor_history_slot.container():
             for notice in competitor_history_notices:
                 st.warning(notice)
@@ -4116,6 +4133,7 @@ with tab_planning:
             "承認件数と発行CPAは入力内容から自動計算します。"
         )
 
+        _aff_perf_mark('manual settings start')
         render_manual_settings(
             opt_summary=opt_summary,
             history_df=history_df,
@@ -4171,6 +4189,7 @@ with tab_planning:
             ].copy()
 
         try:
+            _aff_perf_mark('history analytics start')
             with tab_history, history_analytics_placeholder.container():
                 render_history_analytics(
                     history_df,
@@ -4213,3 +4232,5 @@ with tab_planning:
             opt_mode=opt_mode,
             submission_filename=submission_filename,
         )
+
+_aff_perf_mark("script end")
