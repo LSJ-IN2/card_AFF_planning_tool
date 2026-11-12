@@ -1759,7 +1759,7 @@ def render_history_analytics(
         ax_count.grid(axis="y", alpha=0.25)
         fig_count.tight_layout()
         count_png = _figure_png_bytes(fig_count)
-        st.image(count_png, width="stretch")
+        st.markdown(f'<img src="data:image/png;base64,{base64.b64encode(count_png).decode("ascii")}" style="width:100%;height:auto" alt="月度別発行数">', unsafe_allow_html=True)
         _render_png_actions(
             count_png,
             f"月度別_発行数_{scope_suffix}.png",
@@ -1780,7 +1780,7 @@ def render_history_analytics(
         ax_cpa.grid(axis="y", alpha=0.25)
         fig_cpa.tight_layout()
         cpa_png = _figure_png_bytes(fig_cpa)
-        st.image(cpa_png, width="stretch")
+        st.markdown(f'<img src="data:image/png;base64,{base64.b64encode(cpa_png).decode("ascii")}" style="width:100%;height:auto" alt="月度別発行CPA">', unsafe_allow_html=True)
         _render_png_actions(
             cpa_png,
             f"月度別_発行CPA_{scope_suffix}.png",
@@ -1899,7 +1899,12 @@ def render_history_analytics(
             ax_band.grid(axis="y", alpha=0.25)
             fig_band.tight_layout()
             band_png = _figure_png_bytes(fig_band, dpi=140)
-            st.image(band_png, width="stretch")
+            # StreamlitのメディアURL経由ではなく、正常表示済みの発行数/CPAと同じ方式で埋め込む。
+            st.markdown(
+                f'<img src="data:image/png;base64,{base64.b64encode(band_png).decode("ascii")}" '
+                'style="width:100%;height:auto" alt="月度別単価帯">',
+                unsafe_allow_html=True,
+            )
             _render_png_actions(
                 band_png,
                 f"月度別_単価帯_{int(band_step)}円刻み_{scope_suffix}.png",
